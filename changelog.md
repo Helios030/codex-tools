@@ -2,6 +2,26 @@
 
 ### Unreleased
 
+- v2.9.0
+
+#### English
+
+1. Add GPT-6 Astra to the proxy model list, model restrictions, aliases and API transports. Responses, Chat Completions, Anthropic Messages and WebSocket requests use its Responses Lite format and Codex CLI 0.153.4 identity. Support low through max reasoning, map ultra to max, and reject unsupported none/minimal requests. Existing default model remains GPT-5.6 Sol.
+2. Fix Plus five-hour quota values being overwritten by weekly usage when the API reports a valid 0%, including account-store reloads (#193). Prevent short fork histories from panicking the token and cost scan (#194).
+3. Add Astra cost estimates and select GPT-5.6 Sol/Terra/Luna historical rates using each usage event's timestamp. Rebuild older cost caches. Estimates use standard short-context API rates; date-only price announcements use UTC day boundaries.
+4. Explain unavailable membership expiry, offer re-login, preserve original server refresh errors, and keep the active account snapshot intact when reauthorizing another account. Improve Windows Store ChatGPT/Codex detection, native process shutdown and private-file ACL performance; stop verified old desktop versions before changing account files.
+5. Honor Claude Code output_config.effort after explicit reasoning fields. Allow CODEX_TOOLS_PROXY_SERVICE_TIER to configure the fallback service tier; explicit requests keep precedence and Key restrictions still apply. Preserve existing Average load balancing.
+6. Split model catalog, request policy, Responses Lite conversion, historical pricing, membership UI and desktop lifecycle into focused modules. Require macOS and Windows regression tests and standalone proxy checks before publishing desktop and npm packages.
+
+#### 中文
+
+1. API 反代新增 GPT-6 Astra，覆盖模型列表、模型权限、别名与各 API 入口。Responses、Chat Completions、Anthropic Messages、WebSocket 请求采用其 Responses Lite 格式和 Codex CLI 0.153.4 标识。支持 low 至 max 推理，ultra 映射 max，并拒绝不支持的 none/minimal；已有默认模型保持 GPT-5.6 Sol。
+2. 修复接口返回有效五小时 0% 时被周用量覆盖的问题，同时修复账号存储重新加载路径（#193）；防止短分叉历史导致 Token 和成本扫描越界崩溃（#194）。
+3. 增加 Astra 成本估算，并按每条用量事件的时间选择 GPT-5.6 Sol/Terra/Luna 历史费率；旧成本缓存自动重建。费用按标准短上下文 API 费率估算，只提供日期的调价公告采用 UTC 日界线。
+4. 为会员到期时间缺失提供说明和重新登录入口，保留原始服务端刷新错误，重新授权其他账号时保留当前账号快照。改进 Windows Store ChatGPT/Codex 识别、原生进程退出及私有文件 ACL 性能；切换账号前停止已核实的旧版本桌面进程。
+5. Claude Code 的 output_config.effort 在显式 reasoning 字段之后生效。允许 CODEX_TOOLS_PROXY_SERVICE_TIER 配置默认速度，显式请求优先且继续受 Key 权限限制；保留既有 Average 负载均衡。
+6. 将模型目录、请求配置、Responses Lite 转换、历史计价、会员界面与桌面生命周期拆分为独立模块；桌面和 npm 发布前必须通过 macOS / Windows 回归测试与独立代理编译检查。
+
 - v2.8.0
 
 #### English
