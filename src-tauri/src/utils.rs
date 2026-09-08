@@ -73,60 +73,13 @@ pub(crate) fn try_set_private_permissions(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+#[path = "windows_private_acl.rs"]
+mod windows_private_acl;
+
+#[cfg(windows)]
 fn tighten_windows_private_file_acl(path: &Path) -> Result<(), String> {
-    let escaped_path = path.to_string_lossy().replace('\'', "''");
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'Stop'
-$Path = '{escaped_path}'
-$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-$acl = Get-Acl -LiteralPath $Path
-$acl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($acl.Access)) {{
-    [void]$acl.RemoveAccessRuleAll($rule)
-}}
-$accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-    $identity.User,
-    [System.Security.AccessControl.FileSystemRights]::FullControl,
-    [System.Security.AccessControl.AccessControlType]::Allow
-)
-$acl.AddAccessRule($accessRule)
-Set-Acl -LiteralPath $Path -AclObject $acl
-"#
-    );
-
-    let output = new_resolved_command("powershell")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-Command")
-        .arg(script)
-        .output()
-        .map_err(|error| {
-            format!(
-                "调用 PowerShell 设置私有文件权限失败 {}: {error}",
-                path.display()
-            )
-        })?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() {
-            stderr
-        } else if !stdout.is_empty() {
-            stdout
-        } else {
-            format!("退出码 {:?}", output.status.code())
-        };
-        Err(format!(
-            "设置 Windows 私有文件 ACL 失败 {}: {detail}",
-            path.display()
-        ))
-    }
+    let _timing = crate::switch_timing::Phase::start("private_acl");
+    windows_private_acl::tighten(path)
 }
 
 pub(crate) fn prepare_process_path() {

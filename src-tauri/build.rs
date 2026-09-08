@@ -18,6 +18,8 @@ const REMOTE_BUILD_FILES: &[&str] = &[
     "src/store.rs",
     "src/usage.rs",
     "src/utils.rs",
+    "src/windows_private_acl.rs",
+    "src/switch_timing.rs",
 ];
 
 fn main() {
