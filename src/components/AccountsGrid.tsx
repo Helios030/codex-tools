@@ -11,10 +11,9 @@ import { createPortal } from "react-dom";
 import type { AccountSummary, CodexTokenUsageSnapshot, UsageWindow } from "../types/app";
 import { useI18n } from "../i18n/I18nProvider";
 import { compareAccountsByRemaining } from "../utils/accountRanking";
-import {
-  classifyUsageRefreshError,
-  extractUsageRefreshStatusCode,
-} from "../utils/usageRefreshError";
+import { formatFullDate } from "../utils/dateFormatting";
+import { MembershipExpiry } from "./accounts/MembershipExpiry";
+import { UsageFreshnessBadge } from "./accounts/UsageFreshnessBadge";
 import {
   formatPlan,
   formatTokenCount,
@@ -72,9 +71,6 @@ type UiCopy = {
   weekUsage: string;
   remainingSuffix: (value: string) => string;
   resetTime: string;
-  membershipPeriodEnds: string;
-  membershipPeriodHelp: string;
-  membershipUnavailable: string;
   resetCreditsTitle: string;
   resetCreditsAvailable: (count: number | null) => string;
   resetCreditsExpiresAt: string;
@@ -238,10 +234,6 @@ function getUiCopy(locale: string): UiCopy {
       weekUsage: "周使用率",
       remainingSuffix: (value) => `剩余 ${value}`,
       resetTime: "重置时间",
-      membershipPeriodEnds: "会员到期时间（仅供参考）",
-      membershipPeriodHelp:
-        "该时间来自登录令牌，可能缺失或延迟更新；若显示为空，可尝试重新登录。",
-      membershipUnavailable: "未提供",
       resetCreditsTitle: "重置卡",
       resetCreditsAvailable: (count) => (count === null ? "可用数量未知" : `可用 ${count} 张`),
       resetCreditsExpiresAt: "过期时间（系统本地时间）",
@@ -288,10 +280,6 @@ function getUiCopy(locale: string): UiCopy {
     weekUsage: "Weekly usage",
     remainingSuffix: (value) => `${value} remaining`,
     resetTime: "Reset time",
-    membershipPeriodEnds: "Membership expiry (for reference only)",
-    membershipPeriodHelp:
-      "This date comes from the sign-in token and may be unavailable or delayed. If it is empty, try signing in again.",
-    membershipUnavailable: "Not provided",
     resetCreditsTitle: "Reset cards",
     resetCreditsAvailable: (count) => (count === null ? "Available count unknown" : `${count} available`),
     resetCreditsExpiresAt: "Expires (system local time)",
@@ -348,135 +336,6 @@ function formatResetValue(epochSec: number | null | undefined, locale: string, e
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatFullDate(epochSec: number | null | undefined, locale: string, emptyValue: string): string {
-  if (!epochSec) {
-    return emptyValue;
-  }
-
-  return new Date(epochSec * 1000).toLocaleString(locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-type UsageFreshnessCopy = {
-  usageRefreshing: string;
-  usageRefreshingCached: (updatedAt: string) => string;
-  usageRefreshFailed: (reason: string) => string;
-  usageRefreshFailedCached: (reason: string, updatedAt: string) => string;
-  usageFailureTimeout: string;
-  usageFailureNetwork: string;
-  usageFailureAuthorization: string;
-  usageFailureRateLimited: string;
-  usageFailureServer: string;
-  usageFailureInvalidResponse: string;
-  usageFailureUnknown: string;
-  usageUnavailable: string;
-};
-
-type UsageFreshnessTone = "refreshing" | "error" | "unknown";
-
-function summarizeUsageRefreshError(
-  error: string,
-  copy: UsageFreshnessCopy,
-): string {
-  const kind = classifyUsageRefreshError(error);
-  let summary: string;
-  switch (kind) {
-    case "timeout":
-      summary = copy.usageFailureTimeout;
-      break;
-    case "network":
-      summary = copy.usageFailureNetwork;
-      break;
-    case "authorization":
-      summary = copy.usageFailureAuthorization;
-      break;
-    case "rateLimited":
-      summary = copy.usageFailureRateLimited;
-      break;
-    case "server":
-      summary = copy.usageFailureServer;
-      break;
-    case "invalidResponse":
-      summary = copy.usageFailureInvalidResponse;
-      break;
-    case "unknown":
-      summary = copy.usageFailureUnknown;
-      break;
-  }
-
-  const statusCode = extractUsageRefreshStatusCode(error, kind);
-  return statusCode === null ? summary : `${summary} (${statusCode})`;
-}
-
-function formatUsageFetchedAt(epochSec: number | null | undefined, locale: string): string | null {
-  if (!epochSec) {
-    return null;
-  }
-
-  return new Date(epochSec * 1000).toLocaleString(locale, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function UsageFreshnessBadge({
-  account,
-  refreshing,
-  showInitialRefresh,
-  refreshError,
-  locale,
-  copy,
-}: {
-  account: AccountSummary;
-  refreshing: boolean;
-  showInitialRefresh: boolean;
-  refreshError: string | null;
-  locale: string;
-  copy: UsageFreshnessCopy;
-}) {
-  const fetchedAt = formatUsageFetchedAt(account.usage?.fetchedAt, locale);
-  const error = account.usageError || refreshError;
-  let tone: UsageFreshnessTone = "unknown";
-  let label = copy.usageUnavailable;
-
-  if (showInitialRefresh && refreshing) {
-    tone = "refreshing";
-    label = fetchedAt
-      ? copy.usageRefreshingCached(fetchedAt)
-      : copy.usageRefreshing;
-  } else if (error) {
-    tone = "error";
-    if (account.authRefreshBlocked) {
-      label = error;
-    } else {
-      const reason = summarizeUsageRefreshError(error, copy);
-      label = fetchedAt
-        ? copy.usageRefreshFailedCached(reason, fetchedAt)
-        : copy.usageRefreshFailed(reason);
-    }
-  } else if (fetchedAt) {
-    return null;
-  }
-
-  return (
-    <span
-      className={`usageFreshnessBadge tone-${tone}`}
-      title={error ?? label}
-      aria-label={label}
-    >
-      <span className="usageFreshnessDot" aria-hidden="true" />
-      <span>{label}</span>
-    </span>
-  );
 }
 
 function hasResetCredits(account: AccountSummary): boolean {
@@ -1403,47 +1262,13 @@ export function AccountsGrid({
             </section>
 
             <section className="detailMetaGrid">
-              <div className="membershipExpiryMeta">
-                <span className="membershipExpiryLabel">
-                  {text.membershipPeriodEnds}
-                  <span className="membershipHelpTip">
-                    <button
-                      type="button"
-                      className="membershipHelpButton"
-                      aria-label={text.membershipPeriodHelp}
-                      aria-describedby={`membership-help-${selectedRow.account.id}`}
-                    >
-                      i
-                    </button>
-                    <span
-                      id={`membership-help-${selectedRow.account.id}`}
-                      className="membershipHelpBubble"
-                      role="tooltip"
-                    >
-                      {text.membershipPeriodHelp}
-                    </span>
-                  </span>
-                </span>
-                <strong>
-                  {selectedRow.account.subscriptionActiveUntil
-                    ? formatFullDate(
-                        selectedRow.account.subscriptionActiveUntil,
-                        locale,
-                        text.membershipUnavailable,
-                      )
-                    : text.membershipUnavailable}
-                </strong>
-                {!selectedRow.account.subscriptionActiveUntil ? (
-                  <button
-                    type="button"
-                    className="membershipReauthorizeAction"
-                    onClick={() => onReauthorize(selectedRow.account)}
-                    disabled={authBusy}
-                  >
-                    {text.reauthorize}
-                  </button>
-                ) : null}
-              </div>
+              <MembershipExpiry
+                account={selectedRow.account}
+                locale={locale}
+                authBusy={authBusy}
+                reauthorizeLabel={text.reauthorize}
+                onReauthorize={onReauthorize}
+              />
               <div>
                 <span>{text.planType}</span>
                 <strong>
