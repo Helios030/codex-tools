@@ -632,6 +632,9 @@ export type MessageCatalog = {
       gradientNumber: string;
       numberProgressBar: string;
       logoProgressRing: string;
+      dualConcentricRing: string;
+      dualTrackPill: string;
+      heroNumberDualBars: string;
       hidden: string;
     };
     macosTrayLogoRingVariants: {
@@ -657,6 +660,11 @@ export type MessageCatalog = {
       openFailed: string;
     };
     theme: {
+      quotaStyleLabel: string;
+      bars: string;
+      dualArc: string;
+      quotaStyleHint: string;
+      quotaPreview: string;
       label: string;
       description: string;
       switchAriaLabel: string;

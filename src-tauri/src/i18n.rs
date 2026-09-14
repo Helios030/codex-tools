@@ -237,14 +237,6 @@ pub(crate) fn app_menu_settings(locale: AppLocale) -> String {
     format!("{}...", text(locale, &["settings", "title"]))
 }
 
-pub(crate) fn app_menu_check_updates(locale: AppLocale) -> String {
-    let label = match locale {
-        AppLocale::EnUs => "Check for Updates",
-        _ => text(locale, &["topBar", "checkUpdate"]),
-    };
-    format!("{label}...")
-}
-
 pub(crate) fn tray_switching_to(locale: AppLocale, label: &str) -> String {
     let tpl = match locale {
         AppLocale::ZhCn => "正在切换到 {{label}}...",
@@ -307,4 +299,3 @@ pub(crate) fn tray_action_restart_editors(locale: AppLocale, editors: &str) -> S
     };
     fill_template(tpl, &[("editors", editors.to_string())])
 }
-

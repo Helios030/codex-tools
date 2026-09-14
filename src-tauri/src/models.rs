@@ -611,6 +611,15 @@ pub(crate) enum TrayUsageDisplayMode {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
+pub(crate) enum AccountQuotaDisplayMode {
+    Bars,
+    #[default]
+    #[serde(other)]
+    DualArc,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
 pub(crate) enum MacosTrayTextIconStyle {
     #[default]
     CodexTools,
@@ -627,6 +636,9 @@ pub(crate) enum WindowsTrayIconStyle {
     GradientNumber,
     NumberProgressBar,
     LogoProgressRing,
+    DualConcentricRing,
+    DualTrackPill,
+    HeroNumberDualBars,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -698,6 +710,7 @@ pub(crate) struct InstalledEditorApp {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct AppSettings {
+    pub(crate) account_quota_display_mode: AccountQuotaDisplayMode,
     pub(crate) launch_at_startup: bool,
     pub(crate) tray_usage_display_mode: TrayUsageDisplayMode,
     #[serde(default)]
@@ -760,6 +773,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             launch_at_startup: false,
+            account_quota_display_mode: AccountQuotaDisplayMode::DualArc,
             tray_usage_display_mode: TrayUsageDisplayMode::OneWeekRemaining,
             tray_usage_title_show_window_labels: false,
             macos_tray_text_icon_style: MacosTrayTextIconStyle::CodexTools,
@@ -800,6 +814,7 @@ impl Default for AppSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppSettingsPatch {
+    pub(crate) account_quota_display_mode: Option<AccountQuotaDisplayMode>,
     pub(crate) launch_at_startup: Option<bool>,
     pub(crate) tray_usage_display_mode: Option<TrayUsageDisplayMode>,
     pub(crate) tray_usage_title_show_window_labels: Option<bool>,
@@ -1079,6 +1094,25 @@ fn duplicate_account_merge_score(account: &StoredAccount) -> (u8, u8, u8, u8, i6
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn account_quota_mode_persists_and_accepts_legacy_settings() {
+        use super::AccountQuotaDisplayMode;
+        use serde_json::json;
+        for value in [json!({}), json!({ "accountQuotaDisplayMode": "futureMode" })] {
+            let settings: super::AppSettings = serde_json::from_value(value).unwrap();
+            assert_eq!(settings.account_quota_display_mode, AccountQuotaDisplayMode::DualArc);
+        }
+        let settings: super::AppSettings = serde_json::from_value(json!({ "accountQuotaDisplayMode": "dualArc" })).unwrap();
+        let saved = serde_json::to_value(&settings).unwrap();
+        assert_eq!(saved["accountQuotaDisplayMode"], "dualArc");
+        let restored: super::AppSettings = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.account_quota_display_mode, AccountQuotaDisplayMode::DualArc);
+        let patch: super::AppSettingsPatch = serde_json::from_value(json!({ "accountQuotaDisplayMode": "dualArc" })).unwrap();
+        assert_eq!(patch.account_quota_display_mode, Some(AccountQuotaDisplayMode::DualArc));
+        let existing: super::AppSettings = serde_json::from_value(json!({ "accountQuotaDisplayMode": "bars" })).unwrap();
+        assert_eq!(existing.account_quota_display_mode, AccountQuotaDisplayMode::Bars);
+    }
+
     use super::dedupe_account_variants;
     use super::mark_current_account_summary;
     use super::AppSettings;

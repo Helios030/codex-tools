@@ -99,6 +99,8 @@
   --name-current-glow: rgba(37, 99, 235, 0.14);
   --usage-remain: #64748b;
   --bar-track: #e2e8f0;
+  --quota-week: #245bdd;
+  --quota-five: #137e6a;
   --credits: #2563eb;
   --error-text: #dc2626;
   --glow-hot: transparent;

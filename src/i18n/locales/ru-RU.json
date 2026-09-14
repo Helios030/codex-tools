@@ -613,6 +613,9 @@
       "gradientNumber": "Градиентное число",
       "numberProgressBar": "Число со шкалой прогресса",
       "logoProgressRing": "Значок приложения с кольцом прогресса",
+      "dualConcentricRing": "Двойные концентрические кольца",
+      "dualTrackPill": "Двухполосная капсула",
+      "heroNumberDualBars": "Число и двойная шкала",
       "hidden": "Не показывать"
     },
     "macosTrayLogoRingVariants": {
@@ -642,7 +645,12 @@
       "description": "Переключателем меняйте светлую и темную тему.",
       "switchAriaLabel": "Переключить тему",
       "dark": "Темная",
-      "light": "Светлая"
+      "light": "Светлая",
+      "quotaStyleLabel": "Вид квоты аккаунта",
+      "bars": "Полосы",
+      "dualArc": "Двойные дуги",
+      "quotaStyleHint": "Снаружи: неделя · Внутри: 5 часов. Показан остаток квоты.",
+      "quotaPreview": "Предпросмотр (без переключения)"
     },
     "projectInfo": {
       "versionLabel": "Текущая версия",

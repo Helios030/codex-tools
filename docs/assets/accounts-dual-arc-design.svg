@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="880" viewBox="0 0 880 880" fill="none">
+  <title>双弧形额度显示：账号页与设置页</title>
+  <desc>深色紧凑单列面板。账号卡片右侧外蓝弧表示本周剩余，内青弧表示5小时剩余，中央为小型电源图标按钮。当前账号为绿色启用态。成功切换后弧形从0到100，再回落到真实剩余值。设置提供条形与双弧形选项。</desc>
+  <defs>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: #F2F3F5; font-size: 13px; }
+      .muted { fill: #A5ABB5; font-size: 12px; }
+      .heading { font-size: 14px; font-weight: 600; }
+      .arc { stroke-width: 5; stroke-linecap: round; transform: rotate(135deg); }
+      .track { stroke: #343840; stroke-dasharray: 75 25; }
+      .week { stroke: #699FFF; }
+      .five { stroke: #56C9B8; }
+    </style>
+    <g id="dialTrack">
+      <circle r="55" pathLength="100" class="arc track"/>
+      <circle r="44" pathLength="100" class="arc track"/>
+    </g>
+    <g id="powerIcon" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M0 -9V0 M-6 -5.5A8 8 0 1 0 6 -5.5"/>
+    </g>
+  </defs>
+  <rect width="880" height="880" rx="16" fill="#101114"/>
+  <text x="24" y="30" class="heading">账号页 · 双弧形模式</text>
+  <text x="460" y="30" class="heading">设置 · 新增显示选项</text>
+  <rect x="12" y="46" width="420" height="696" rx="12" fill="#141518" stroke="#343840"/>
+  <rect x="448" y="46" width="420" height="696" rx="12" fill="#141518" stroke="#343840"/>
+  <g fill="#343840"><circle cx="28" cy="66" r="5"/><circle cx="44" cy="66" r="5"/><circle cx="60" cy="66" r="5"/><circle cx="464" cy="66" r="5"/><circle cx="480" cy="66" r="5"/><circle cx="496" cy="66" r="5"/></g>
+  <text x="390" y="72" class="muted">↻</text><text x="826" y="72" class="muted">↻</text>
+  <rect x="30" y="90" width="96" height="34" rx="6" fill="#292D33"/>
+  <text x="78" y="112" text-anchor="middle">账号</text><text x="174" y="112" text-anchor="middle" class="muted">分析</text><text x="270" y="112" text-anchor="middle" class="muted">API 反代</text><text x="366" y="112" text-anchor="middle" class="muted">设置</text>
+  <rect x="754" y="90" width="96" height="34" rx="6" fill="#292D33"/>
+  <text x="514" y="112" text-anchor="middle" class="muted">账号</text><text x="610" y="112" text-anchor="middle" class="muted">分析</text><text x="706" y="112" text-anchor="middle" class="muted">API 反代</text><text x="802" y="112" text-anchor="middle">设置</text>
+  <path d="M12 136H432 M448 136H868" stroke="#343840"/>
+  <text x="30" y="160" class="muted">账号数 2</text>
+  <rect x="30" y="174" width="384" height="36" rx="8" fill="#1B1D21" stroke="#343840"/>
+  <text x="44" y="197" class="muted">搜索账号 / 邮箱</text>
+  <rect x="30" y="222" width="58" height="34" rx="8" fill="#1B1D21" stroke="#343840"/><text x="59" y="244" text-anchor="middle">筛选</text>
+  <rect x="96" y="222" width="58" height="34" rx="8" fill="#1B1D21" stroke="#343840"/><text x="125" y="244" text-anchor="middle">更多</text>
+  <rect x="212" y="222" width="94" height="34" rx="8" fill="#1B1D21" stroke="#343840"/><text x="259" y="244" text-anchor="middle">智能切换</text>
+  <rect x="314" y="222" width="100" height="34" rx="8" fill="#245BDD"/><text x="364" y="244" text-anchor="middle">＋ 添加账号</text>
+  <rect x="30" y="272" width="384" height="176" rx="8" fill="#1B1D21" stroke="#343840"/>
+  <text x="44" y="301" class="heading">工作账号</text>
+  <text x="44" y="321" class="muted">work@example.com</text>
+  <rect x="44" y="333" width="44" height="18" rx="4" fill="#292239"/><text x="66" y="346" text-anchor="middle" style="fill:#B999FF;font-size:10px">PLUS</text>
+  <circle cx="103" cy="342" r="3" fill="#699FFF"/><text x="112" y="346" class="muted">使用中</text>
+  <circle cx="47" cy="367" r="3" fill="#699FFF"/><text x="58" y="371" class="muted">本周剩余</text><text x="150" y="371" class="heading">96%</text>
+  <circle cx="47" cy="388" r="3" fill="#56C9B8"/><text x="58" y="392" class="muted">5小时剩余</text><text x="150" y="392" class="heading">73%</text>
+  <g transform="translate(337 349)">
+    <use href="#dialTrack"/>
+    <circle r="55" pathLength="100" class="arc week" stroke-dasharray="72 100"/>
+    <circle r="44" pathLength="100" class="arc five" stroke-dasharray="54.75 100"/>
+    <circle r="19" fill="#23262B" stroke="#3A6155"/>
+    <use href="#powerIcon" style="color:#56C9B8"/>
+  </g>
+  <rect x="44" y="404" width="52" height="30" rx="6" stroke="#343840"/><text x="70" y="424" text-anchor="middle">详情</text>
+  <rect x="370" y="404" width="30" height="30" rx="6" stroke="#343840"/><text x="385" y="426" text-anchor="middle" style="font-size:20px">⋮</text>
+  <rect x="30" y="460" width="384" height="176" rx="8" fill="#1B1D21" stroke="#343840"/>
+  <text x="44" y="489" class="heading">备用账号</text><text x="44" y="509" class="muted">backup@example.com</text>
+  <rect x="44" y="521" width="44" height="18" rx="4" fill="#292239"/><text x="66" y="534" text-anchor="middle" style="fill:#B999FF;font-size:10px">PLUS</text>
+  <circle cx="103" cy="530" r="3" fill="#56C9B8"/><text x="112" y="534" class="muted">可用</text>
+  <circle cx="47" cy="555" r="3" fill="#699FFF"/><text x="58" y="559" class="muted">本周剩余</text><text x="150" y="559" class="heading">89%</text>
+  <circle cx="47" cy="576" r="3" fill="#56C9B8"/><text x="58" y="580" class="muted">5小时剩余</text><text x="150" y="580" class="heading">59%</text>
+  <g transform="translate(337 537)">
+    <use href="#dialTrack"/>
+    <circle r="55" pathLength="100" class="arc week" stroke-dasharray="66.75 100"/>
+    <circle r="44" pathLength="100" class="arc five" stroke-dasharray="44.25 100"/>
+    <circle r="19" fill="#23262B" stroke="#454B55"/>
+    <use href="#powerIcon" style="color:#A5ABB5"/>
+  </g>
+  <rect x="44" y="592" width="52" height="30" rx="6" stroke="#343840"/><text x="70" y="612" text-anchor="middle">详情</text>
+  <rect x="370" y="592" width="30" height="30" rx="6" stroke="#343840"/><text x="385" y="614" text-anchor="middle" style="font-size:20px">⋮</text>
+  <text x="30" y="668" class="muted">外层本周 · 内层5小时 · 均为剩余额度</text>
+  <text x="30" y="690" class="muted">此处为设计标注，正式列表不重复显示图例。</text>
+  <text x="466" y="166" class="heading">外观</text>
+  <text x="466" y="204">主题</text><rect x="744" y="182" width="106" height="34" rx="8" fill="#292D33"/><text x="797" y="204" text-anchor="middle">深色</text>
+  <path d="M466 234H850" stroke="#343840"/>
+  <text x="466" y="266" class="heading">账号额度样式</text>
+  <rect x="466" y="284" width="384" height="40" rx="8" fill="#1B1D21" stroke="#343840"/>
+  <rect x="660" y="288" width="186" height="32" rx="6" fill="#292D33"/>
+  <text x="562" y="309" text-anchor="middle" class="muted">条形</text><text x="753" y="309" text-anchor="middle">✓ 双弧形</text>
+  <rect x="466" y="340" width="384" height="170" rx="8" fill="#1B1D21" stroke="#343840"/>
+  <text x="482" y="367" class="muted">样式预览</text>
+  <circle cx="485" cy="400" r="3" fill="#699FFF"/><text x="496" y="404" class="muted">本周剩余</text><text x="590" y="404" class="heading">89%</text>
+  <circle cx="485" cy="424" r="3" fill="#56C9B8"/><text x="496" y="428" class="muted">5小时剩余</text><text x="590" y="428" class="heading">59%</text>
+  <g transform="translate(773 418)">
+    <use href="#dialTrack"/>
+    <circle r="55" pathLength="100" class="arc week" stroke-dasharray="66.75 100"/>
+    <circle r="44" pathLength="100" class="arc five" stroke-dasharray="44.25 100"/>
+    <circle r="19" fill="#23262B" stroke="#3A6155"/>
+    <use href="#powerIcon" style="color:#56C9B8"/>
+  </g>
+  <text x="482" y="487" class="muted">仅预览，不执行账号切换</text>
+  <text x="466" y="540" class="muted">外层本周 · 内层5小时，显示剩余额度。</text>
+  <text x="466" y="562" class="muted">保存后立即生效，下次启动保留选择。</text>
+  <path d="M466 586H850" stroke="#343840"/>
+  <text x="466" y="616" class="muted">只影响账号卡片；详情与系统状态栏不变。</text>
+  <text x="466" y="638" class="muted">不增加新页面，不改变窗口拖动与导航。</text>
+  <text x="24" y="782" class="heading">启动扫弧 · 后台确认成功后播放一次</text>
+  <text x="24" y="809">0% → 100%（200ms）→ 实际剩余额度（400ms）</text>
+  <text x="24" y="832" class="muted">中心缩为 38px 电源图标，命中区 44px；扫弧期间左侧数字保持真实值。</text>
+  <text x="24" y="855" class="muted">本图为设计稿，实际功能待实施与交互验证。</text>
+</svg>

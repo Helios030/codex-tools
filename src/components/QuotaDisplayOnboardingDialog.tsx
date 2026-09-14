@@ -264,6 +264,24 @@ function MacosQuotaDisplayOnboardingContent({
       ariaLabel: `${logoProgressRingLabel}: ${copy.settings.macosTrayLogoRingVariants.withoutPercentage}`,
       showLogoRingPercentage: false,
     },
+    {
+      key: "dualConcentricRing",
+      style: "dualConcentricRing",
+      label: copy.settings.windowsTrayIconStyle.dualConcentricRing,
+      ariaLabel: copy.settings.windowsTrayIconStyle.dualConcentricRing,
+    },
+    {
+      key: "dualTrackPill",
+      style: "dualTrackPill",
+      label: copy.settings.windowsTrayIconStyle.dualTrackPill,
+      ariaLabel: copy.settings.windowsTrayIconStyle.dualTrackPill,
+    },
+    {
+      key: "heroNumberDualBars",
+      style: "heroNumberDualBars",
+      label: copy.settings.windowsTrayIconStyle.heroNumberDualBars,
+      ariaLabel: copy.settings.windowsTrayIconStyle.heroNumberDualBars,
+    },
   ];
   useEffect(() => {
     let cancelled = false;
@@ -649,6 +667,18 @@ function QuotaDisplayOnboardingContent({
       label: copy.settings.windowsTrayIconStyle.numberProgressBar,
     },
     { value: "logoProgressRing", label: copy.settings.windowsTrayIconStyle.logoProgressRing },
+    {
+      value: "dualConcentricRing",
+      label: copy.settings.windowsTrayIconStyle.dualConcentricRing,
+    },
+    {
+      value: "dualTrackPill",
+      label: copy.settings.windowsTrayIconStyle.dualTrackPill,
+    },
+    {
+      value: "heroNumberDualBars",
+      label: copy.settings.windowsTrayIconStyle.heroNumberDualBars,
+    },
   ];
 
   useEffect(() => {

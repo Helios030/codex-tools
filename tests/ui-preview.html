@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -31,6 +31,7 @@
         },
       }));
       const settings = {
+        accountQuotaDisplayMode: params.get('quota') ?? 'dualArc',
         launchAtStartup: false, trayUsageDisplayMode: 'oneWeekRemaining',
         trayUsageTitleShowWindowLabels: false, macosTrayTextIconStyle: 'codexTools',
         windowsTrayIconStyle: 'gradientNumberPlate', trayQuotaIconVisible: true,
@@ -46,7 +47,17 @@
       const totals = { inputTokens: 10000, cachedInputTokens: 2000, outputTokens: 5000, reasoningOutputTokens: 0, totalTokens: 15000 };
       const tokens = { updatedAt: now, sourcePathCount: 1, failedPathCount: 0, unresolvedForkCount: 0, unresolvedUsageEventCount: 0, eventCount: 1, last24h: totals, last3d: totals, last7d: totals, last30d: totals, latestSession: null };
       const analytics = { ...tokens, total: totals, totalCostUsd: 2, localTotalCostUsd: 2, last7dCostUsd: 2, localLast7dCostUsd: 2, budgetPeriodCostUsd: 2, localBudgetPeriodCostUsd: 2, pricingSource: 'UI fixture', costSource: 'local_estimate', costSourceUpdatedAt: now, costSourceError: null, weeklyBudgetUsd: null, weeklyBudgetPercent: null, weeklyBudgetAlert: 'none', projects: [], sessions: [], heatmap: [], topPrompts: [] };
-      window.uiPreview = { commands: [], accounts };
+      for (const account of accounts) {
+        for (const [param, cycle] of [['week', 'oneWeek'], ['five', 'fiveHour']]) {
+          if (params.has(param)) account.usage[cycle] = params.get(param) === 'unknown' ? null : { ...account.usage[cycle], usedPercent: 100 - Number(params.get(param)) };
+        }
+      }
+      window.uiPreview = { commands: [], accounts, animations: [] };
+      const originalAnimate = Element.prototype.animate;
+      Element.prototype.animate = function(frames, options) {
+        if (this.classList.contains('quotaArcValue')) window.uiPreview.animations.push({ frames, options, values: this.closest('.accountRow')?.querySelectorAll('[role="progressbar"]') ? [...this.closest('.accountRow').querySelectorAll('[role="progressbar"]')].map(el => el.getAttribute('aria-valuenow')) : [] });
+        return originalAnimate.call(this, frames, options);
+      };
       const nativeInvoke = window.__TAURI_INTERNALS__?.invoke;
       mockWindows('main');
       mockIPC(async (cmd, args = {}) => {
@@ -54,7 +65,7 @@
         if (cmd.startsWith('plugin:window|')) return nativeInvoke ? nativeInvoke(cmd, args) : false;
         if (cmd === 'list_accounts' || cmd === 'refresh_all_usage') return structuredClone(accounts);
         if (cmd === 'get_app_settings') return { ...settings };
-        if (cmd === 'update_app_settings') { Object.assign(settings, args.patch); return { ...settings }; }
+        if (cmd === 'update_app_settings') { if (params.has('fail-settings')) throw new Error('UI fixture: settings failed'); Object.assign(settings, args.patch); return { ...settings }; }
         if (cmd === 'get_installed_editor_apps' || cmd === 'list_api_proxy_keys' || cmd === 'list_api_proxy_key_usage_logs') return [];
         if (cmd.includes('supported_models')) return ['gpt-5.5'];
         if (cmd === 'get_api_proxy_status') return { running: false, port: null, apiKey: null, baseUrl: null, lanBaseUrl: null, codexProxyBound: false, codexProxyRestoreAvailable: false, activeAccountKey: null, lastError: null };

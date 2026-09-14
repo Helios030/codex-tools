@@ -26,7 +26,8 @@ use crate::state::AppState;
 use crate::store::load_store;
 #[cfg(target_os = "macos")]
 use crate::tray_visual::{
-    render_native_macos_tray_visual, tray_visual_dimensions, TrayVisualPlatform, TrayVisualStatus,
+    render_native_macos_tray_visual_dual, tray_visual_dimensions, TrayUsageValues,
+    TrayVisualPlatform, TrayVisualStatus,
 };
 #[cfg(target_os = "windows")]
 use crate::windows_taskbar_widget::WindowsTaskbarWidgetSnapshot;
@@ -229,6 +230,26 @@ fn quota_icon_percent(accounts: &[AccountSummary]) -> Option<f64> {
 }
 
 #[cfg(target_os = "macos")]
+fn quota_icon_tray_values(accounts: &[AccountSummary]) -> TrayUsageValues {
+    let current_usage = accounts
+        .iter()
+        .find(|account| account.is_current)
+        .and_then(|account| account.usage.as_ref());
+    let five_hour = current_usage
+        .and_then(|u| u.five_hour.as_ref())
+        .map(|w| (100.0 - w.used_percent).clamp(0.0, 100.0));
+    let one_week = current_usage
+        .and_then(|u| u.one_week.as_ref())
+        .map(|w| (100.0 - w.used_percent).clamp(0.0, 100.0));
+    let primary = quota_icon_percent(accounts);
+    TrayUsageValues {
+        primary,
+        five_hour,
+        one_week,
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn macos_onboarding_preview_percent(
     onboarding_completed: bool,
     accounts: &[AccountSummary],
@@ -249,14 +270,14 @@ fn macos_light_theme(app: &AppHandle) -> bool {
 fn render_macos_tray_icon(
     app: &AppHandle,
     style: WindowsTrayIconStyle,
-    percent: Option<f64>,
+    values: TrayUsageValues,
 ) -> tauri::image::Image<'static> {
     const MACOS_SOURCE_SIZE: u32 = 64;
     let (width, height) =
         tray_visual_dimensions(style, TrayVisualPlatform::Macos, MACOS_SOURCE_SIZE);
-    render_native_macos_tray_visual(
+    render_native_macos_tray_visual_dual(
         style,
-        percent,
+        values,
         TrayVisualStatus::Fresh,
         macos_light_theme(app),
         width,
@@ -268,9 +289,9 @@ fn render_macos_tray_icon(
 fn native_macos_tray_icon(
     app: &AppHandle,
     style: WindowsTrayIconStyle,
-    percent: Option<f64>,
+    values: TrayUsageValues,
 ) -> Result<tray_icon::Icon, String> {
-    let image = render_macos_tray_icon(app, style, percent);
+    let image = render_macos_tray_icon(app, style, values);
     tray_icon::Icon::from_rgba(image.rgba().to_vec(), image.width(), image.height())
         .map_err(|error| format!("创建原生状态栏图标失败: {error}"))
 }
@@ -294,7 +315,11 @@ fn native_macos_text_status_icon(
     match style {
         MacosTrayTextIconStyle::CodexTools => native_macos_legacy_status_icon(),
         MacosTrayTextIconStyle::ProgressRing => {
-            native_macos_tray_icon(app, WindowsTrayIconStyle::LogoProgressRing, percent)
+            native_macos_tray_icon(
+                app,
+                WindowsTrayIconStyle::LogoProgressRing,
+                TrayUsageValues::from_primary(percent),
+            )
         }
     }
 }
@@ -901,6 +926,17 @@ fn update_macos_tray_snapshot_on_main_thread(
         macos_onboarding_preview_percent(store.settings.macos_quota_onboarding_completed, accounts)
     });
     let percent = quota_icon_percent(accounts).or(onboarding_preview_percent);
+    let mut quota_values = quota_icon_tray_values(accounts);
+    if quota_values.primary.is_none()
+        && quota_values.five_hour.is_none()
+        && quota_values.one_week.is_none()
+    {
+        if let Some(preview_val) = onboarding_preview_percent {
+            quota_values.primary = Some(preview_val);
+            quota_values.five_hour = Some(preview_val);
+            quota_values.one_week = Some(preview_val);
+        }
+    }
 
     if should_show_usage_surface(mode) {
         let title = onboarding_preview_percent
@@ -974,7 +1010,7 @@ fn update_macos_tray_snapshot_on_main_thread(
             MACOS_QUOTA_STATUS_AUTOSAVE_NAME,
             accounts,
             quota_mode,
-            native_macos_tray_icon(app, icon_style, percent)?,
+            native_macos_tray_icon(app, icon_style, quota_values)?,
             quota_title.as_deref().unwrap_or(""),
             &quota_tooltip,
             "额度",
@@ -988,7 +1024,7 @@ fn update_macos_tray_snapshot_on_main_thread(
     quota_tray.set_menu(Some(Box::new(build_macos_tray_menu(
         app, accounts, quota_mode,
     )?)));
-    let icon = native_macos_tray_icon(app, icon_style, percent)?;
+    let icon = native_macos_tray_icon(app, icon_style, quota_values)?;
     quota_tray
         .set_icon_with_as_template(Some(icon), false)
         .map_err(|error| format!("更新额度状态栏图标失败: {error}"))?;
@@ -1366,6 +1402,17 @@ fn create_macos_status_bar_trays(
 
     let quota_mode = TrayUsageDisplayMode::Remaining;
     let percent = quota_icon_percent(&summaries).or(onboarding_preview_percent);
+    let mut quota_values = quota_icon_tray_values(&summaries);
+    if quota_values.primary.is_none()
+        && quota_values.five_hour.is_none()
+        && quota_values.one_week.is_none()
+    {
+        if let Some(preview_val) = onboarding_preview_percent {
+            quota_values.primary = Some(preview_val);
+            quota_values.five_hour = Some(preview_val);
+            quota_values.one_week = Some(preview_val);
+        }
+    }
     let quota_title = macos_quota_icon_title(icon_style, percent, logo_ring_show_percentage);
     let quota_tooltip = build_macos_tray_tooltip(&summaries, quota_mode, locale);
     let quota_tray = if quota_icon_visible {
@@ -1375,7 +1422,7 @@ fn create_macos_status_bar_trays(
             MACOS_QUOTA_STATUS_AUTOSAVE_NAME,
             &summaries,
             quota_mode,
-            native_macos_tray_icon(app, icon_style, percent)?,
+            native_macos_tray_icon(app, icon_style, quota_values)?,
             quota_title.as_deref().unwrap_or(""),
             &quota_tooltip,
             "额度",

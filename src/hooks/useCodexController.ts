@@ -2,9 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check } from "@tauri-apps/plugin-updater";
-import { PROJECT_LATEST_RELEASE_URL } from "../constants/externalLinks";
 import { useI18n } from "../i18n/I18nProvider";
 import { localizeBackendError } from "../i18n/backendErrors";
 import { DEFAULT_LOCALE } from "../i18n/catalog";
@@ -31,7 +28,6 @@ import type {
   InstalledEditorApp,
   Notice,
   OauthCallbackFinishedEvent,
-  PendingUpdateInfo,
   PreparedOauthLogin,
   RemoteDeployProgress,
   RemoteProxyStatus,
@@ -47,13 +43,7 @@ import {
   pickBestSmartSwitchAccount,
   sortAccountsByRemaining,
 } from "../utils/accountRanking";
-import {
-  getLatestChangelogEntry,
-  getUnreleasedChangelogEntry,
-} from "../utils/changelog";
-
 const COST_ANALYTICS_STALE_MS = 30 * 60 * 1000;
-const UPDATE_CHECK_MS = 60 * 60 * 1000;
 const API_PROXY_POLL_MS = 4_000;
 const API_PROXY_USAGE_POLL_MS = 15_000;
 const CLOUDFLARED_POLL_MS = 3_000;
@@ -69,6 +59,7 @@ const API_PROXY_USAGE_RANGE_SECONDS: Record<ApiProxyUsageRange, number> = {
   "30d": 2_592_000,
 };
 const DEFAULT_SETTINGS: AppSettings = {
+  accountQuotaDisplayMode: "dualArc",
   launchAtStartup: false,
   trayUsageDisplayMode: "oneWeekRemaining",
   trayUsageTitleShowWindowLabels: false,
@@ -421,6 +412,7 @@ export function useCodexController(
   const [startingCloudflared, setStartingCloudflared] = useState(false);
   const [stoppingCloudflared, setStoppingCloudflared] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
+  const [completedSwitch, setCompletedSwitch] = useState({ accountId: "", sequence: 0 });
   const [warmingAccountId, setWarmingAccountId] = useState<string | null>(null);
   const [renamingAccountId, setRenamingAccountId] = useState<string | null>(
     null,
@@ -431,13 +423,6 @@ export function useCodexController(
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(
     null,
   );
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [installingUpdate, setInstallingUpdate] = useState(false);
-  const [updateProgress, setUpdateProgress] = useState<string | null>(null);
-  const [pendingUpdate, setPendingUpdate] = useState<PendingUpdateInfo | null>(
-    null,
-  );
-  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -446,7 +431,6 @@ export function useCodexController(
     InstalledEditorApp[]
   >([]);
   const [hasOpencodeDesktopApp, setHasOpencodeDesktopApp] = useState(false);
-  const installingUpdateRef = useRef(false);
   const settingsUpdateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const settingsRef = useRef<AppSettings>(DEFAULT_SETTINGS);
   const apiProxyUsageLoadSeqRef = useRef(0);
@@ -1041,10 +1025,6 @@ export function useCodexController(
   );
 
   useEffect(() => {
-    installingUpdateRef.current = installingUpdate;
-  }, [installingUpdate]);
-
-  useEffect(() => {
     if (!notice) {
       return;
     }
@@ -1056,143 +1036,6 @@ export function useCodexController(
       window.clearTimeout(timer);
     };
   }, [notice]);
-
-  const installPendingUpdate = useCallback(
-    async (knownUpdate?: NonNullable<Awaited<ReturnType<typeof check>>>) => {
-      if (installingUpdateRef.current) {
-        return;
-      }
-
-      if (!knownUpdate && pendingUpdate?.debugPreview) {
-        setPendingUpdate(null);
-        setUpdateProgress(null);
-        setUpdateDialogOpen(false);
-        return;
-      }
-
-      setInstallingUpdate(true);
-      setUpdateProgress(copy.notices.preparingUpdateDownload);
-      try {
-        const update = knownUpdate ?? (await check());
-        if (!update) {
-          setPendingUpdate(null);
-          setUpdateDialogOpen(false);
-          setNotice({ type: "ok", message: copy.notices.alreadyLatest });
-          return;
-        }
-
-        let totalBytes = 0;
-        let downloadedBytes = 0;
-        await update.downloadAndInstall((event) => {
-          if (event.event === "Started") {
-            totalBytes = event.data.contentLength ?? 0;
-            downloadedBytes = 0;
-            setUpdateProgress(copy.notices.updateDownloadStarted);
-          } else if (event.event === "Progress") {
-            downloadedBytes += event.data.chunkLength;
-            if (totalBytes > 0) {
-              const percentValue = Math.min(
-                100,
-                Math.round((downloadedBytes / totalBytes) * 100),
-              );
-              setUpdateProgress(
-                copy.notices.updateDownloadingPercent(percentValue),
-              );
-            } else {
-              setUpdateProgress(copy.notices.updateDownloading);
-            }
-          } else if (event.event === "Finished") {
-            setUpdateProgress(copy.notices.updateDownloadFinished);
-          }
-        });
-
-        setUpdateProgress(copy.notices.updateInstalling);
-        await relaunch();
-      } catch (error) {
-        setNotice({
-          type: "error",
-          message: copy.notices.updateInstallFailed(
-            localizeError(String(error)),
-          ),
-        });
-        setUpdateProgress(null);
-      } finally {
-        setInstallingUpdate(false);
-      }
-    },
-    [copy.notices, localizeError, pendingUpdate?.debugPreview],
-  );
-
-  const checkForAppUpdate = useCallback(
-    async (quiet = false) => {
-      if (!quiet) {
-        setCheckingUpdate(true);
-      }
-      try {
-        const update = await check();
-        if (update) {
-          if (
-            quiet &&
-            settingsRef.current.skippedUpdateVersion === update.version
-          ) {
-            return;
-          }
-
-          setUpdateProgress(null);
-          setPendingUpdate({
-            currentVersion: update.currentVersion,
-            version: update.version,
-            body: update.body,
-            date: update.date,
-          });
-          setUpdateDialogOpen(true);
-          if (!quiet) {
-            setNotice({
-              type: "info",
-              message: copy.notices.foundNewVersion(
-                update.version,
-                update.currentVersion,
-              ),
-            });
-          }
-        } else {
-          setPendingUpdate(null);
-          setUpdateDialogOpen(false);
-          setUpdateProgress(null);
-          if (!quiet) {
-            setNotice({ type: "ok", message: copy.notices.alreadyLatest });
-          }
-        }
-      } catch (error) {
-        if (!quiet) {
-          setNotice({
-            type: "error",
-            message: copy.notices.updateCheckFailed(
-              localizeError(String(error)),
-            ),
-          });
-        }
-      } finally {
-        if (!quiet) {
-          setCheckingUpdate(false);
-        }
-      }
-    },
-    [copy.notices, localizeError],
-  );
-
-  const openManualDownloadPage = useCallback(async () => {
-    try {
-      await invoke("open_external_url", { url: PROJECT_LATEST_RELEASE_URL });
-    } catch (error) {
-      setNotice({
-        type: "error",
-        message: copy.notices.openManualDownloadFailed(
-          localizeError(String(error)),
-        ),
-      });
-    }
-  }, [copy.notices, localizeError]);
 
   const openExternalUrl = useCallback(
     async (url: string) => {
@@ -1209,29 +1052,6 @@ export function useCodexController(
     },
     [copy.notices, localizeError],
   );
-
-  const closeUpdateDialog = useCallback(() => {
-    setUpdateDialogOpen(false);
-  }, []);
-
-  const openDebugUpdateDialog = useCallback(() => {
-    const latestChangelogEntry =
-      getUnreleasedChangelogEntry(locale) ?? getLatestChangelogEntry(locale);
-    const version = latestChangelogEntry?.version ?? "0.0.0";
-    const body = latestChangelogEntry?.items
-      .map((item, index) => `${index + 1}. ${item}`)
-      .join("\n");
-
-    setUpdateProgress(null);
-    setPendingUpdate({
-      currentVersion: "debug-local",
-      version,
-      body,
-      date: new Date().toISOString().slice(0, 10),
-      debugPreview: true,
-    });
-    setUpdateDialogOpen(true);
-  }, [locale]);
 
   useEffect(() => {
     let disposed = false;
@@ -1335,25 +1155,6 @@ export function useCodexController(
     };
   }, []);
 
-  const skipPendingUpdateVersion = useCallback(async () => {
-    if (!pendingUpdate) {
-      return;
-    }
-
-    setPendingUpdate(null);
-    setUpdateProgress(null);
-    setUpdateDialogOpen(false);
-
-    if (pendingUpdate.debugPreview) {
-      return;
-    }
-
-    await updateSettings(
-      { skippedUpdateVersion: pendingUpdate.version },
-      { silent: true, keepInteractive: true },
-    );
-  }, [pendingUpdate, updateSettings]);
-
   useEffect(() => {
     if (usageBootstrapStartedRef.current) {
       return;
@@ -1384,13 +1185,11 @@ export function useCodexController(
         // remain lightweight and do not rotate credentials unnecessarily.
         refreshUsage(true, true, true, "startup"),
         refreshTokenUsage(true),
-        settingsTask.then(() => checkForAppUpdate(true)),
       ]);
     };
 
     void bootstrap();
   }, [
-    checkForAppUpdate,
     loadAccounts,
     loadApiProxyKeys,
     loadApiProxySupportedModels,
@@ -1400,23 +1199,6 @@ export function useCodexController(
     maybeShowProfileIntegrityNotice,
     refreshTokenUsage,
     refreshUsage,
-  ]);
-
-  useEffect(() => {
-    if (!mainWindowVisible) {
-      return;
-    }
-
-    const updateTimer = window.setInterval(() => {
-      void checkForAppUpdate(true);
-    }, UPDATE_CHECK_MS);
-
-    return () => {
-      window.clearInterval(updateTimer);
-    };
-  }, [
-    checkForAppUpdate,
-    mainWindowVisible,
   ]);
 
   useEffect(() => {
@@ -3058,11 +2840,14 @@ export function useCodexController(
             restartEditorTargets: settings.restartEditorTargets,
           },
         );
-        await loadAccounts();
+        const confirmedAccounts = await loadAccounts();
 
         void remoteProxyAutoRedeployRef.current();
         const notice = buildSwitchNotice(result, settings, copy, localizeError);
         setNotice(notice);
+        if (!result.noOp && confirmedAccounts.some((item) => item.id === result.accountId && item.isCurrent)) {
+          setCompletedSwitch((previous) => ({ accountId: result.accountId, sequence: previous.sequence + 1 }));
+        }
         return !result.noOp;
       } catch (error) {
         try {
@@ -3193,12 +2978,6 @@ export function useCodexController(
     pendingDeleteId: deleteCandidate?.id ?? null,
     deleteCandidate,
     deletingAccountId,
-    checkingUpdate,
-    installingUpdate,
-    updateProgress,
-    pendingUpdate,
-    updateDialogOpen,
-    skipPendingUpdateVersion,
     notice,
     openExternalUrl,
     settings,
@@ -3215,11 +2994,6 @@ export function useCodexController(
     refreshCostAnalytics,
     exportCostAnalytics,
     onDeleteCodexSession,
-    checkForAppUpdate,
-    installPendingUpdate,
-    openDebugUpdateDialog,
-    openManualDownloadPage,
-    closeUpdateDialog,
     updateSettings,
     onOpenAddDialog,
     onReauthorizeAccount,
@@ -3267,5 +3041,6 @@ export function useCodexController(
     onSmartSwitch,
     onUpdateRemoteServers,
     smartSwitching: authBusy,
+    completedSwitch,
   };
 }

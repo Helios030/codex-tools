@@ -25,13 +25,33 @@ const MACOS_CARD_DIGIT_SCALE: f32 = 1.0;
 const MACOS_CARD_HUNDRED_DIGIT_SCALE: f32 = 1.3;
 const MACOS_CARD_BORDER_WIDTH: f32 = 3.75;
 
-pub(crate) const TRAY_VISUAL_STYLES: [WindowsTrayIconStyle; 5] = [
+pub(crate) const TRAY_VISUAL_STYLES: [WindowsTrayIconStyle; 8] = [
     WindowsTrayIconStyle::GradientNumberPlate,
     WindowsTrayIconStyle::GradientNumberCard,
     WindowsTrayIconStyle::GradientNumber,
     WindowsTrayIconStyle::NumberProgressBar,
     WindowsTrayIconStyle::LogoProgressRing,
+    WindowsTrayIconStyle::DualConcentricRing,
+    WindowsTrayIconStyle::DualTrackPill,
+    WindowsTrayIconStyle::HeroNumberDualBars,
 ];
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct TrayUsageValues {
+    pub(crate) primary: Option<f64>,
+    pub(crate) five_hour: Option<f64>,
+    pub(crate) one_week: Option<f64>,
+}
+
+impl TrayUsageValues {
+    pub(crate) fn from_primary(primary: Option<f64>) -> Self {
+        Self {
+            primary,
+            five_hour: primary,
+            one_week: primary,
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +86,8 @@ pub(crate) fn tray_visual_dimensions(
         match style {
             WindowsTrayIconStyle::GradientNumberCard => (base_size * 4 / 3, base_size),
             WindowsTrayIconStyle::NumberProgressBar => (base_size * 5 / 4, base_size),
+            WindowsTrayIconStyle::DualTrackPill => (base_size * 2, base_size),
+            WindowsTrayIconStyle::HeroNumberDualBars => (base_size * 15 / 10, base_size),
             _ => (base_size, base_size),
         }
     } else {
@@ -81,7 +103,25 @@ pub(crate) fn render_tray_visual(
     width: u32,
     height: u32,
 ) -> Image<'static> {
-    render_tray_visual_internal(style, percent, status, light_theme, width, height, false)
+    render_tray_visual_dual(
+        style,
+        TrayUsageValues::from_primary(percent),
+        status,
+        light_theme,
+        width,
+        height,
+    )
+}
+
+pub(crate) fn render_tray_visual_dual(
+    style: WindowsTrayIconStyle,
+    values: TrayUsageValues,
+    status: TrayVisualStatus,
+    light_theme: bool,
+    width: u32,
+    height: u32,
+) -> Image<'static> {
+    render_tray_visual_internal(style, values, status, light_theme, width, height, false)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -93,12 +133,31 @@ pub(crate) fn render_native_macos_tray_visual(
     width: u32,
     height: u32,
 ) -> Image<'static> {
-    render_tray_visual_internal(style, percent, status, light_theme, width, height, true)
+    render_native_macos_tray_visual_dual(
+        style,
+        TrayUsageValues::from_primary(percent),
+        status,
+        light_theme,
+        width,
+        height,
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn render_native_macos_tray_visual_dual(
+    style: WindowsTrayIconStyle,
+    values: TrayUsageValues,
+    status: TrayVisualStatus,
+    light_theme: bool,
+    width: u32,
+    height: u32,
+) -> Image<'static> {
+    render_tray_visual_internal(style, values, status, light_theme, width, height, true)
 }
 
 fn render_tray_visual_internal(
     style: WindowsTrayIconStyle,
-    percent: Option<f64>,
+    values: TrayUsageValues,
     status: TrayVisualStatus,
     light_theme: bool,
     width: u32,
@@ -109,7 +168,8 @@ fn render_tray_visual_internal(
     let height = height.max(16);
     let master_width = width * SUPERSAMPLE;
     let master_height = height * SUPERSAMPLE;
-    let normalized_percent = percent.map(normalize_percent);
+    let primary_percent = values.primary.or(values.five_hour).or(values.one_week);
+    let normalized_percent = primary_percent.map(normalize_percent);
     let label = icon_label(normalized_percent, status);
     let digit_scale = if label == "100" {
         MACOS_CARD_HUNDRED_DIGIT_SCALE
@@ -292,6 +352,36 @@ fn render_tray_visual_internal(
                 draw_codex_mark(&mut canvas);
             }
         }
+        WindowsTrayIconStyle::DualConcentricRing => {
+            let five_prog = values.five_hour.unwrap_or(0.0) / 100.0;
+            let week_prog = values.one_week.unwrap_or(0.0) / 100.0;
+            draw_dual_concentric_ring(
+                &mut canvas,
+                five_prog,
+                week_prog,
+                light_theme,
+                status,
+            );
+        }
+        WindowsTrayIconStyle::DualTrackPill => {
+            draw_dual_track_pill(
+                &mut canvas,
+                values.five_hour,
+                values.one_week,
+                status,
+                light_theme,
+            );
+        }
+        WindowsTrayIconStyle::HeroNumberDualBars => {
+            draw_hero_number_dual_bars(
+                &mut canvas,
+                primary_percent,
+                values.five_hour,
+                values.one_week,
+                status,
+                light_theme,
+            );
+        }
     }
 
     let rgba = downsample_rgba(&canvas.pixels, master_width, master_height, width, height);
@@ -307,9 +397,13 @@ pub(crate) fn render_tray_visual_previews(
         .into_iter()
         .map(|style| {
             let (width, height) = tray_visual_dimensions(style, platform, base_size);
-            let image = render_tray_visual(
+            let image = render_tray_visual_dual(
                 style,
-                Some(97.0),
+                TrayUsageValues {
+                    primary: Some(97.0),
+                    five_hour: Some(97.0),
+                    one_week: Some(85.0),
+                },
                 TrayVisualStatus::Fresh,
                 light_theme,
                 width,
@@ -817,8 +911,13 @@ fn draw_solid_rounded_rect(canvas: &mut Canvas, rect: RectF, radius: f32, color:
 }
 
 fn inside_rounded_rect(x: f32, y: f32, rect: RectF, radius: f32) -> bool {
-    let center_x = x.clamp(rect.left + radius, rect.right - radius);
-    let center_y = y.clamp(rect.top + radius, rect.bottom - radius);
+    let radius = radius.min(rect.width() / 2.0).min(rect.height() / 2.0).max(0.0);
+    let min_x = rect.left + radius;
+    let max_x = (rect.right - radius).max(min_x);
+    let min_y = rect.top + radius;
+    let max_y = (rect.bottom - radius).max(min_y);
+    let center_x = x.clamp(min_x, max_x);
+    let center_y = y.clamp(min_y, max_y);
     let dx = x - center_x;
     let dy = y - center_y;
     dx * dx + dy * dy <= radius * radius
@@ -873,6 +972,289 @@ fn draw_progress_ring(canvas: &mut Canvas, progress: f64, light_theme: bool) {
                 canvas.blend(x, y, track);
             }
         }
+    }
+}
+
+fn draw_dual_concentric_ring(
+    canvas: &mut Canvas,
+    five_hour_progress: f64,
+    one_week_progress: f64,
+    light_theme: bool,
+    status: TrayVisualStatus,
+) {
+    let center_x = canvas.width as f32 / 2.0;
+    let center_y = canvas.height as f32 / 2.0;
+    let size = canvas.width.min(canvas.height) as f32;
+
+    let outer_radius = size * 0.415;
+    let outer_thickness = size * 0.082;
+    let outer_prog = one_week_progress.clamp(0.0, 1.0) as f32;
+
+    let inner_radius = size * 0.265;
+    let inner_thickness = size * 0.082;
+    let inner_prog = five_hour_progress.clamp(0.0, 1.0) as f32;
+
+    let track_outer = if light_theme {
+        [210, 220, 232, 220]
+    } else {
+        [65, 75, 92, 200]
+    };
+    let track_inner = if light_theme {
+        [225, 232, 242, 240]
+    } else {
+        [80, 92, 112, 220]
+    };
+
+    let outer_color = if light_theme { [20, 95, 210, 255] } else { [45, 125, 245, 255] };
+    let inner_color = if light_theme { [0, 160, 220, 255] } else { [0, 215, 255, 255] };
+
+    for y in 0..canvas.height {
+        for x in 0..canvas.width {
+            let dx = x as f32 + 0.5 - center_x;
+            let dy = y as f32 + 0.5 - center_y;
+            let dist = (dx * dx + dy * dy).sqrt();
+
+            // 外环：周额度
+            if dist >= outer_radius - outer_thickness / 2.0
+                && dist <= outer_radius + outer_thickness / 2.0
+            {
+                let mut turn = dy.atan2(dx) / std::f32::consts::TAU + 0.25;
+                if turn < 0.0 {
+                    turn += 1.0;
+                }
+                if turn <= outer_prog {
+                    canvas.blend(x, y, outer_color);
+                } else {
+                    canvas.blend(x, y, track_outer);
+                }
+            }
+
+            // 内环：5小时额度
+            if dist >= inner_radius - inner_thickness / 2.0
+                && dist <= inner_radius + inner_thickness / 2.0
+            {
+                let mut turn = dy.atan2(dx) / std::f32::consts::TAU + 0.25;
+                if turn < 0.0 {
+                    turn += 1.0;
+                }
+                if turn <= inner_prog {
+                    canvas.blend(x, y, inner_color);
+                } else {
+                    canvas.blend(x, y, track_inner);
+                }
+            }
+        }
+    }
+
+    if status == TrayVisualStatus::Unavailable {
+        draw_centered_label(
+            canvas,
+            "--",
+            RectF::new(
+                center_x - size * 0.16,
+                center_y - size * 0.16,
+                center_x + size * 0.16,
+                center_y + size * 0.16,
+            ),
+            LabelPaint::Solid(if light_theme { DARK_TEXT } else { LIGHT_TEXT }),
+            None,
+        );
+    } else {
+        let dot_radius = size * 0.080;
+        let dot_radius_sq = dot_radius * dot_radius;
+        let dot_color = if light_theme { DARK_TEXT } else { LIGHT_TEXT };
+        let min_y = (center_y - dot_radius).floor().max(0.0) as u32;
+        let max_y = (center_y + dot_radius).ceil().min(canvas.height as f32 - 1.0) as u32;
+        let min_x = (center_x - dot_radius).floor().max(0.0) as u32;
+        let max_x = (center_x + dot_radius).ceil().min(canvas.width as f32 - 1.0) as u32;
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let dx = x as f32 + 0.5 - center_x;
+                let dy = y as f32 + 0.5 - center_y;
+                if dx * dx + dy * dy <= dot_radius_sq {
+                    canvas.blend(x, y, dot_color);
+                }
+            }
+        }
+    }
+}
+
+fn draw_dual_track_pill(
+    canvas: &mut Canvas,
+    five_hour: Option<f64>,
+    one_week: Option<f64>,
+    status: TrayVisualStatus,
+    light_theme: bool,
+) {
+    let w = canvas.width as f32;
+    let h = canvas.height as f32;
+
+    let five_label = icon_label(five_hour.map(normalize_percent), status);
+    let week_label = icon_label(one_week.map(normalize_percent), status);
+
+    // 背景完全透明，与系统菜单栏图标风格融为一体
+    let label_color = if light_theme {
+        [15, 25, 45, 175]
+    } else {
+        [255, 255, 255, 175]
+    };
+    let text_color = if light_theme {
+        DARK_TEXT
+    } else {
+        LIGHT_TEXT
+    };
+    let bar_track = if light_theme {
+        [15, 25, 45, 40]
+    } else {
+        [255, 255, 255, 55]
+    };
+    let bar_fill = if light_theme {
+        DARK_TEXT
+    } else {
+        LIGHT_TEXT
+    };
+
+    // 上层：Hour 标签与读数
+    let top_y_start = h * 0.04;
+    let top_y_end = h * 0.44;
+    draw_centered_label_scaled(
+        canvas,
+        "Hour",
+        RectF::new(w * 0.02, top_y_start, w * 0.50, top_y_end),
+        0.88,
+        LabelPaint::Solid(label_color),
+        None,
+    );
+    draw_centered_label_scaled(
+        canvas,
+        &five_label,
+        RectF::new(w * 0.52, top_y_start, w * 0.98, top_y_end),
+        0.90,
+        LabelPaint::Solid(text_color),
+        None,
+    );
+
+    // 中间微进度条（纯透明背景下的精致系统微光细线）
+    let bar_y = h * 0.48;
+    let bar_h = (h * 0.04).max(1.0);
+    let bar_radius = bar_h / 2.0;
+    let bar_rect = RectF::new(w * 0.04, bar_y, w * 0.96, bar_y + bar_h);
+    draw_solid_rounded_rect(canvas, bar_rect, bar_radius, bar_track);
+    let prog1 = (five_hour.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32;
+    if prog1 > 0.0 {
+        let fill_w = (bar_rect.width() * prog1).max(bar_radius * 2.0);
+        draw_solid_rounded_rect(
+            canvas,
+            RectF::new(
+                bar_rect.left,
+                bar_y,
+                (bar_rect.left + fill_w).min(bar_rect.right),
+                bar_y + bar_h,
+            ),
+            bar_radius,
+            bar_fill,
+        );
+    }
+
+    // 下层：Week 标签与读数
+    let bot_y_start = h * 0.56;
+    let bot_y_end = h * 0.96;
+    draw_centered_label_scaled(
+        canvas,
+        "Week",
+        RectF::new(w * 0.02, bot_y_start, w * 0.50, bot_y_end),
+        0.88,
+        LabelPaint::Solid(label_color),
+        None,
+    );
+    draw_centered_label_scaled(
+        canvas,
+        &week_label,
+        RectF::new(w * 0.52, bot_y_start, w * 0.98, bot_y_end),
+        0.90,
+        LabelPaint::Solid(text_color),
+        None,
+    );
+}
+
+fn draw_hero_number_dual_bars(
+    canvas: &mut Canvas,
+    primary_percent: Option<f64>,
+    five_hour: Option<f64>,
+    one_week: Option<f64>,
+    status: TrayVisualStatus,
+    light_theme: bool,
+) {
+    let w = canvas.width as f32;
+    let h = canvas.height as f32;
+
+    let hero_val = five_hour.or(primary_percent).or(one_week);
+    let label = icon_label(hero_val.map(normalize_percent), status);
+
+    // 左侧大字号读数
+    draw_centered_label(
+        canvas,
+        &label,
+        RectF::new(w * 0.03, h * 0.06, w * 0.62, h * 0.94),
+        LabelPaint::Solid(if light_theme { DARK_TEXT } else { LIGHT_TEXT }),
+        None,
+    );
+
+    // 右侧双能量柱
+    let bar_top = h * 0.14;
+    let bar_bottom = h * 0.86;
+    let bar_h = bar_bottom - bar_top;
+    let bar_w = (w * 0.11).max(2.0);
+    let bar_radius = bar_w / 2.0;
+
+    let track_color = if light_theme {
+        [210, 222, 238, 180]
+    } else {
+        [55, 68, 88, 180]
+    };
+    let color_five = if light_theme {
+        [0, 160, 225, 255]
+    } else {
+        [0, 215, 255, 255]
+    };
+    let color_week = if light_theme {
+        [30, 110, 220, 255]
+    } else {
+        [60, 135, 250, 255]
+    };
+
+    // 柱 1：5H
+    let bar1_left = w * 0.66;
+    let bar1_right = bar1_left + bar_w;
+    let rect1 = RectF::new(bar1_left, bar_top, bar1_right, bar_bottom);
+    draw_solid_rounded_rect(canvas, rect1, bar_radius, track_color);
+
+    let prog1 = (five_hour.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32;
+    if prog1 > 0.0 {
+        let fill_top = (bar_bottom - bar_h * prog1).min(bar_bottom - bar_radius * 2.0);
+        draw_solid_rounded_rect(
+            canvas,
+            RectF::new(bar1_left, fill_top.max(bar_top), bar1_right, bar_bottom),
+            bar_radius,
+            color_five,
+        );
+    }
+
+    // 柱 2：1W
+    let bar2_left = w * 0.82;
+    let bar2_right = bar2_left + bar_w;
+    let rect2 = RectF::new(bar2_left, bar_top, bar2_right, bar_bottom);
+    draw_solid_rounded_rect(canvas, rect2, bar_radius, track_color);
+
+    let prog2 = (one_week.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32;
+    if prog2 > 0.0 {
+        let fill_top = (bar_bottom - bar_h * prog2).min(bar_bottom - bar_radius * 2.0);
+        draw_solid_rounded_rect(
+            canvas,
+            RectF::new(bar2_left, fill_top.max(bar_top), bar2_right, bar_bottom),
+            bar_radius,
+            color_week,
+        );
     }
 }
 
@@ -1595,6 +1977,58 @@ mod tests {
             ),
             (80, 64)
         );
+        assert_eq!(
+            tray_visual_dimensions(
+                WindowsTrayIconStyle::DualConcentricRing,
+                TrayVisualPlatform::Macos,
+                64,
+            ),
+            (64, 64)
+        );
+        assert_eq!(
+            tray_visual_dimensions(
+                WindowsTrayIconStyle::DualTrackPill,
+                TrayVisualPlatform::Macos,
+                64,
+            ),
+            (128, 64)
+        );
+        assert_eq!(
+            tray_visual_dimensions(
+                WindowsTrayIconStyle::HeroNumberDualBars,
+                TrayVisualPlatform::Macos,
+                64,
+            ),
+            (96, 64)
+        );
+    }
+
+    #[test]
+    fn dual_quota_styles_render_cleanly() {
+        let values = TrayUsageValues {
+            primary: Some(97.0),
+            five_hour: Some(97.0),
+            one_week: Some(85.0),
+        };
+        for style in [
+            WindowsTrayIconStyle::DualConcentricRing,
+            WindowsTrayIconStyle::DualTrackPill,
+            WindowsTrayIconStyle::HeroNumberDualBars,
+        ] {
+            let (width, height) = tray_visual_dimensions(style, TrayVisualPlatform::Macos, 64);
+            let image = render_native_macos_tray_visual_dual(
+                style,
+                values,
+                TrayVisualStatus::Fresh,
+                true,
+                width,
+                height,
+            );
+            assert_eq!(image.width(), width);
+            assert_eq!(image.height(), height);
+            let (min_x, min_y, max_x, max_y) = opaque_bounds(&image);
+            assert!(max_x > min_x && max_y > min_y);
+        }
     }
 
     #[test]
@@ -1643,7 +2077,7 @@ mod tests {
         let render_number_bounds = |percent, native_macos| {
             let image = render_tray_visual_internal(
                 WindowsTrayIconStyle::GradientNumberCard,
-                Some(percent),
+                TrayUsageValues::from_primary(Some(percent)),
                 TrayVisualStatus::Fresh,
                 true,
                 85,
@@ -1689,7 +2123,7 @@ mod tests {
                 WindowsTrayIconStyle::NumberProgressBar => {
                     pixel[0] < 80 && pixel[1] < 80 && pixel[2] < 100 && pixel[3] > 16
                 }
-                WindowsTrayIconStyle::LogoProgressRing => false,
+                _ => false,
             });
             let dimensions = format!("style={style:?}, bounds={number:?}, canvas={width}x{height}");
             assert!(number.0 <= number.2 && number.1 <= number.3, "{dimensions}");

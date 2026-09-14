@@ -1006,77 +1006,11 @@
   white-space: nowrap;
 }
 
-.updateOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  padding: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--overlay-scrim-strong);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  animation: fadeIn 140ms ease both;
-}
 
-.updateDialog {
-  width: min(660px, 100%);
-  max-height: calc(100vh - 40px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--update-border);
-  border-radius: 18px;
-  background: var(--update-bg);
-  box-shadow:
-    0 24px 64px rgba(15, 23, 42, 0.22),
-    0 1px 1px rgba(15, 23, 42, 0.08),
-    inset 0 1px var(--surface-highlight-soft);
-  animation: riseIn 220ms ease both;
-}
 
-.updateDialogHeader {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 18px 18px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, var(--surface-tint) 18%);
-  background: var(--update-header-bg);
-}
 
-.updateDialogIcon {
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--brand);
-  background: color-mix(in srgb, var(--brand-soft) 70%, var(--surface-tint) 30%);
-  box-shadow: inset 0 1px var(--surface-highlight-strong);
-}
 
-.updateDialogTitleBlock {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-}
 
-.updateVersionPill {
-  width: fit-content;
-  max-width: 100%;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid color-mix(in srgb, var(--brand) 28%, var(--line) 72%);
-  border-radius: 999px;
-  padding: 3px 8px;
-  color: var(--brand-strong);
-  background: color-mix(in srgb, var(--brand-soft) 66%, var(--surface-tint) 34%);
-  font: 800 0.72rem/1 var(--font-mono);
-  white-space: nowrap;
-}
 
 .settingsHeader {
   display: flex;
@@ -1092,34 +1026,10 @@
   letter-spacing: -0.02em;
 }
 
-.updateDialogHeader h2 {
-  margin: 0;
-  color: var(--update-strong);
-  font: 750 1.16rem/1.18 var(--font-ui);
-}
 
-.updateDialogHeader p {
-  margin: 0;
-  color: var(--update-subtle);
-  font: 500 0.84rem/1.45 var(--font-ui);
-}
 
-.updateDialogContent {
-  min-height: 0;
-  overflow: auto;
-  padding: 16px 18px 12px;
-}
 
-.updateDialogContent::-webkit-scrollbar {
-  width: 10px;
-}
 
-.updateDialogContent::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--line) 74%, var(--subtle) 26%);
-  background-clip: padding-box;
-}
 
 .settingsGroup {
   border: 1px solid color-mix(in srgb, var(--line) 84%, var(--surface-tint) 16%);

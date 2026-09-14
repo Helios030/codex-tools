@@ -84,7 +84,6 @@ use utils::new_background_command;
 
 const OAUTH_CALLBACK_FINISHED_EVENT: &str = "oauth-callback-finished";
 const APP_MENU_OPEN_SETTINGS_EVENT: &str = "app-menu-open-settings";
-const APP_MENU_CHECK_UPDATE_EVENT: &str = "app-menu-check-update";
 const PERIODIC_USAGE_REFRESHED_EVENT: &str = "periodic-usage-refreshed";
 #[cfg(all(target_os = "macos", debug_assertions))]
 const APP_MENU_OPEN_QUOTA_ONBOARDING_EVENT: &str = "app-menu-open-quota-onboarding";
@@ -93,7 +92,6 @@ const MAIN_WINDOW_VISIBILITY_CHANGED_EVENT: &str = "main-window-visibility-chang
 pub(crate) const ACCOUNT_SWITCHED_EVENT: &str = "account-switched";
 const CODEX_COST_ANALYTICS_CACHE_FILE: &str = "codex-cost-analytics-cache.json";
 const APP_MENU_SETTINGS_ID: &str = "app_menu_settings";
-const APP_MENU_CHECK_UPDATES_ID: &str = "app_menu_check_updates";
 #[cfg(all(target_os = "macos", debug_assertions))]
 const APP_MENU_OPEN_QUOTA_ONBOARDING_ID: &str = "app_menu_open_quota_onboarding";
 const PERIODIC_USAGE_REFRESH_INTERVAL_SECS: u64 = 60;
@@ -2893,7 +2891,6 @@ fn setup_macos_app_menu(app: &AppHandle) -> Result<(), String> {
     let app_version = package_info.version.to_string();
     let about_label = i18n::app_menu_about(locale, &app_name);
     let settings_label = i18n::app_menu_settings(locale);
-    let check_updates_label = i18n::app_menu_check_updates(locale);
     let about_metadata = AboutMetadata {
         name: Some(app_name.clone()),
         version: Some(app_version.clone()),
@@ -2925,14 +2922,6 @@ fn setup_macos_app_menu(app: &AppHandle) -> Result<(), String> {
                 Some("CmdOrCtrl+,"),
             )
             .map_err(|e| format!("创建设置菜单失败: {e}"))?,
-            &MenuItem::with_id(
-                app,
-                APP_MENU_CHECK_UPDATES_ID,
-                check_updates_label,
-                true,
-                None::<&str>,
-            )
-            .map_err(|e| format!("创建更新菜单失败: {e}"))?,
             &PredefinedMenuItem::separator(app).map_err(|e| format!("创建菜单分隔符失败: {e}"))?,
             &PredefinedMenuItem::services(app, None)
                 .map_err(|e| format!("创建服务菜单失败: {e}"))?,
@@ -3051,12 +3040,6 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
         return;
     }
 
-    if id == APP_MENU_CHECK_UPDATES_ID {
-        restore_main_window(app);
-        let _ = app.emit(APP_MENU_CHECK_UPDATE_EVENT, ());
-        return;
-    }
-
     #[cfg(all(target_os = "macos", debug_assertions))]
     if id == APP_MENU_OPEN_QUOTA_ONBOARDING_ID {
         restore_main_window(app);
@@ -3077,8 +3060,6 @@ pub fn run() {
             restore_main_window(app);
         }))
         .manage(AppState::default())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -3086,6 +3067,11 @@ pub fn run() {
         .on_menu_event(handle_menu_event)
         .on_window_event(handle_window_close_to_background)
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            if let Err(err) = app.handle().set_dock_visibility(false) {
+                log::warn!("启动时隐藏 Dock 图标失败: {err}");
+            }
+
             utils::prepare_process_path();
 
             if cfg!(debug_assertions) {

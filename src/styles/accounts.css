@@ -36,6 +36,59 @@
 .metaWarning { color: var(--warning); }
 .metaError { color: var(--danger); }
 
+.accountRow.isDualArc { grid-template-columns: minmax(0, 1fr) 126px; gap: 8px 12px; }
+.isDualArc .accountIdentityCell { grid-column: 1; grid-row: 1; display: block; }
+.isDualArc .accountAvatar { display: none; }
+.isDualArc .accountIdentityText { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.isDualArc .accountTitleLine { display: contents; }
+.isDualArc .accountNameButton { order: -1; flex-basis: 100%; }
+.isDualArc .accountStateLine { flex: 1; min-width: 0; flex-wrap: wrap; overflow-wrap: anywhere; }
+.isDualArc > .quotaNumericWeek { grid-column: 1; grid-row: 2; }
+.isDualArc > .quotaNumericFive { grid-column: 1; grid-row: 3; }
+.isDualArc > .quotaArc { grid-column: 2; grid-row: 1 / 5; }
+.isDualArc .rowActions { grid-row: 4; }
+.quotaNumeric { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--subtle); font-size: 12px; }
+.quotaNumeric::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--quota-color); }
+.quotaNumericWeek { --quota-color: var(--quota-week); }
+.quotaNumericFive { --quota-color: var(--quota-five); }
+.quotaNumeric strong { margin-left: auto; color: var(--ink); font-size: 12px; font-weight: 600; text-align: right; }
+.quotaNumeric.isLow { --quota-color: var(--warning); }
+.quotaNumeric.isEmpty { --quota-color: var(--danger); }
+.quotaArc { position: relative; width: 126px; height: 126px; flex: 0 0 126px; cursor: default; }
+.quotaArc > svg { width: 100%; height: 100%; overflow: visible; }
+.quotaArc circle { fill: none; stroke-width: 5px; stroke-linecap: round; transform: rotate(135deg); }
+.quotaArcTrack { stroke: var(--bar-track); stroke-dasharray: 75 100; }
+.quotaArcValue { transition: stroke-dasharray 180ms ease-out; }
+.quotaArcWeek { stroke: var(--quota-week); }
+.quotaArcFive { stroke: var(--quota-five); }
+.quotaArcValue.isLow { stroke: var(--warning); }
+.quotaArcValue.isEmpty { stroke: var(--danger); }
+.quotaStartButton {
+  position: absolute; inset: 0; margin: auto; transform: none;
+  display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+  min-height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--subtle);
+  background: transparent; box-shadow: none; isolation: isolate;
+}
+.quotaStartButton::before { content: ''; position: absolute; inset: 3px; border: 1px solid var(--line); border-radius: 50%; background: var(--bg-2); z-index: -1; }
+.quotaStartButton:hover { transform: none; color: var(--brand); background: transparent; box-shadow: none; }
+.quotaStartButton:disabled { transform: none; box-shadow: none; }
+.quotaStartButton:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.quotaStartButton.isCurrent { color: var(--quota-five); opacity: 1; }
+.quotaStartButton.isCurrent::before { border-color: color-mix(in srgb, var(--quota-five) 45%, var(--line)); }
+.quotaPowerIcon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.quotaPowerIcon.isBusy { animation: quotaWaiting 800ms linear infinite; }
+@keyframes quotaWaiting { to { transform: rotate(360deg); } }
+.quotaStyleSetting { min-width: 0; }
+.quotaStyleModes { display: flex; width: 100%; }
+.quotaStyleModes button { flex: 1; min-width: 0; }
+.quotaStylePreview { grid-column: 1 / -1; width: 100%; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.quotaPreviewValues { display: grid; flex: 1; min-width: 0; gap: 12px; }
+.quotaStyleHint { grid-column: 1 / -1; margin: 0; color: var(--subtle); font-size: 12px; line-height: 1.5; }
+@media (prefers-reduced-motion: reduce) {
+  .quotaArcValue { transition: none; }
+  .quotaPowerIcon.isBusy { animation: none; }
+}
+
 .accountsWorkspace::-webkit-scrollbar {
   width: 8px;
   height: 8px;

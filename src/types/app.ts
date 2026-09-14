@@ -413,14 +413,6 @@ export type Notice = {
   message: string;
 };
 
-export type PendingUpdateInfo = {
-  currentVersion: string;
-  version: string;
-  body?: string;
-  date?: string;
-  debugPreview?: boolean;
-};
-
 export type ThemeMode = "light" | "dark";
 
 export type TrayUsageDisplayMode = "remaining" | "used" | "fiveHourRemaining" | "oneWeekRemaining" | "hidden";
@@ -430,7 +422,10 @@ export type WindowsTrayIconStyle =
   | "gradientNumberCard"
   | "gradientNumber"
   | "numberProgressBar"
-  | "logoProgressRing";
+  | "logoProgressRing"
+  | "dualConcentricRing"
+  | "dualTrackPill"
+  | "heroNumberDualBars";
 export type WindowsTaskbarWidgetPlacement = "embedded" | "left" | "hidden";
 
 export type ApiProxyLoadBalanceMode = "average" | "sequential";
@@ -450,6 +445,7 @@ export type InstalledEditorApp = {
 };
 
 export type AppSettings = {
+  accountQuotaDisplayMode: "bars" | "dualArc";
   launchAtStartup: boolean;
   trayUsageDisplayMode: TrayUsageDisplayMode;
   trayUsageTitleShowWindowLabels: boolean;

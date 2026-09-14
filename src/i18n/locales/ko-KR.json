@@ -613,6 +613,9 @@
       "gradientNumber": "그라데이션 숫자",
       "numberProgressBar": "숫자 진행률 막대",
       "logoProgressRing": "앱 아이콘 진행률 링",
+      "dualConcentricRing": "이중 동심원 링",
+      "dualTrackPill": "이중 트랙 캡슐",
+      "heroNumberDualBars": "숫자 및 듀얼 바",
       "hidden": "표시 안 함"
     },
     "macosTrayLogoRingVariants": {
@@ -642,7 +645,12 @@
       "description": "스위치로 라이트/다크 테마를 전환합니다.",
       "switchAriaLabel": "테마 전환",
       "dark": "다크",
-      "light": "라이트"
+      "light": "라이트",
+      "quotaStyleLabel": "계정 할당량 표시",
+      "bars": "막대",
+      "dualArc": "이중 원호",
+      "quotaStyleHint": "바깥쪽: 주간 · 안쪽: 5시간. 남은 할당량을 표시합니다.",
+      "quotaPreview": "스타일 미리보기 (전환 없음)"
     },
     "projectInfo": {
       "versionLabel": "현재 버전",

@@ -14,6 +14,7 @@ import { compareAccountsByRemaining } from "../utils/accountRanking";
 import { formatFullDate } from "../utils/dateFormatting";
 import { MembershipExpiry } from "./accounts/MembershipExpiry";
 import { UsageFreshnessBadge } from "./accounts/UsageFreshnessBadge";
+import { QuotaArc, QuotaPowerIcon } from "./accounts/QuotaArc";
 import {
   formatPlan,
   formatTokenCount,
@@ -98,6 +99,8 @@ type UiCopy = {
 };
 
 type AccountsGridProps = {
+  quotaDisplayMode: "bars" | "dualArc";
+  completedSwitch: { accountId: string; sequence: number };
   leadingContent?: ReactNode;
   toolbarActions?: ReactNode;
   accounts: AccountSummary[];
@@ -560,6 +563,8 @@ function ActionIcon({ type }: { type: "login" | "warmup" | "export" | "delete" |
 }
 
 export function AccountsGrid({
+  quotaDisplayMode,
+  completedSwitch,
   leadingContent,
   toolbarActions,
   accounts,
@@ -586,6 +591,7 @@ export function AccountsGrid({
 }: AccountsGridProps) {
   const { copy, locale } = useI18n();
   const text = getUiCopy(locale);
+  const dualArc = quotaDisplayMode !== "bars";
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [planFilter, setPlanFilter] = useState("all");
@@ -935,7 +941,7 @@ export function AccountsGrid({
                 return (
                   <article
                     key={row.id}
-                    className={`accountRow status-${status}${isSelected ? " isSelected" : ""}${isMenuOpen ? " isMenuOpen" : ""}`}
+                    className={`accountRow status-${status}${dualArc ? " isDualArc" : ""}${isSelected ? " isSelected" : ""}${isMenuOpen ? " isMenuOpen" : ""}`}
                     onClick={(event) => {
                       detailTriggerRef.current = event.currentTarget.querySelector<HTMLButtonElement>(".accountDetailsButton");
                       setSelectedAccountId(account.id);
@@ -981,7 +987,7 @@ export function AccountsGrid({
                               selectAccount(account.id);
                             }}
                           >
-                            {accountAddress}
+                            {dualArc ? account.label || accountAddress : accountAddress}
                           </button>
                         </span>
                         <span className="accountStateLine">
@@ -1006,6 +1012,29 @@ export function AccountsGrid({
                         </span>
                       </span>
                     </div>
+                    {dualArc ? <>
+                      {[{ window: account.usage?.oneWeek ?? null, label: copy.accountsGrid.weekRemaining, cycle: "Week" },
+                        { window: account.usage?.fiveHour ?? null, label: copy.accountsGrid.fiveHourRemaining, cycle: "Five" }].map(({ window: quota, label, cycle }) => {
+                        const value = remainingPercent(quota);
+                        return <div key={cycle} className={`quotaNumeric quotaNumeric${cycle}${value !== null && value <= 0 ? " isEmpty" : value !== null && value < 15 ? " isLow" : ""}`}
+                          role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+                          aria-valuenow={value !== null && Number.isFinite(value) ? value : undefined}
+                          aria-valuetext={value === 0 ? `${percent(value)} ${text.statusExhausted}` : percent(value)}>
+                          <span>{label}</span><strong>{value === null || !Number.isFinite(value) ? "—" : percent(value)}{value === 0 ? ` · ${text.statusExhausted}` : ""}</strong>
+                        </div>;
+                      })}
+                      <QuotaArc week={remainingPercent(account.usage?.oneWeek ?? null)}
+                        fiveHour={remainingPercent(account.usage?.fiveHour ?? null)} current={account.isCurrent && completedSwitch.accountId === account.id} switching={switchingId !== null}
+                        startupSequence={completedSwitch.sequence}>
+                        <button type="button" className={`quotaStartButton${account.isCurrent ? " isCurrent" : ""}`}
+                          disabled={authBusy || account.isCurrent} aria-busy={isSwitching}
+                          aria-label={`${isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : status === "issue" ? text.reauthorize : text.switchAccount}: ${accountAddress}`}
+                          title={`${isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : status === "issue" ? text.reauthorize : text.switchAccount}\n${copy.accountsGrid.weekRemaining}: ${percent(remainingPercent(account.usage?.oneWeek ?? null))}\n${copy.accountsGrid.fiveHourRemaining}: ${percent(remainingPercent(account.usage?.fiveHour ?? null))}\n${text.resetTime}: ${formatFullDate(account.usage?.oneWeek?.resetAt, locale, text.emptyValue)} / ${formatFullDate(account.usage?.fiveHour?.resetAt, locale, text.emptyValue)}`}
+                          onClick={(event) => { event.stopPropagation(); if (status === "issue") onReauthorize(account); else void handleSwitch(account, event.timeStamp); }}>
+                          <QuotaPowerIcon busy={isSwitching} authorization={status === "issue" && !account.isCurrent} />
+                        </button>
+                      </QuotaArc>
+                    </> : <>
                     <UsageMeter
                       className="accountUsageFive"
                       label={copy.accountsGrid.fiveHourRemaining}
@@ -1018,12 +1047,13 @@ export function AccountsGrid({
                       window={account.usage?.oneWeek ?? null}
                       text={text}
                     />
+                    </>}
                     <div className="rowActions">
                       <button type="button" className="accountDetailsButton"
                         onClick={(event) => { event.stopPropagation(); selectAccount(account.id); }}>
                         {copy.accountsGrid.detailsAction}
                       </button>
-                      <button
+                      {!dualArc ? <button
                         type="button"
                         className="rowSwitchButton"
                         disabled={switchDisabled || account.isCurrent}
@@ -1033,7 +1063,7 @@ export function AccountsGrid({
                         }}
                       >
                         {isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : text.switchAccount}
-                      </button>
+                      </button> : null}
                       <button
                         type="button"
                         className={`rowMoreButton${isDeletePending ? " isPending" : ""}`}

@@ -613,6 +613,9 @@
       "gradientNumber": "グラデーション数字",
       "numberProgressBar": "数字進捗バー",
       "logoProgressRing": "アプリアイコン進捗リング",
+      "dualConcentricRing": "二重同心円リング",
+      "dualTrackPill": "デュアルトラックカプセル",
+      "heroNumberDualBars": "数値とデュアルバー",
       "hidden": "表示しない"
     },
     "macosTrayLogoRingVariants": {
@@ -642,7 +645,12 @@
       "description": "スイッチでライト/ダークテーマを切り替えます。",
       "switchAriaLabel": "テーマ切替",
       "dark": "ダーク",
-      "light": "ライト"
+      "light": "ライト",
+      "quotaStyleLabel": "アカウント使用枠の表示",
+      "bars": "バー",
+      "dualArc": "二重アーク",
+      "quotaStyleHint": "外側：週間 · 内側：5時間。残りの使用枠を表示します。",
+      "quotaPreview": "表示プレビュー（切り替えなし）"
     },
     "projectInfo": {
       "versionLabel": "現在のバージョン",

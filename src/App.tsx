@@ -7,14 +7,12 @@ import { AddAccountSection } from "./components/AddAccountSection";
 import { AddAccountDialog } from "./components/AddAccountDialog";
 import { AccountsGrid } from "./components/AccountsGrid";
 import { AppTopBar } from "./components/AppTopBar";
-import { DebugFloatingTool } from "./components/DebugFloatingTool";
 import { DeleteAccountDialog } from "./components/DeleteAccountDialog";
 import { MetaStrip } from "./components/MetaStrip";
 import { NoticeBanner } from "./components/NoticeBanner";
 import { QuotaDisplayOnboardingDialog } from "./components/QuotaDisplayOnboardingDialog";
 import { RemoteDeployProgressToast } from "./components/RemoteDeployProgressToast";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { UpdateBanner } from "./components/UpdateBanner";
 import { useCodexController } from "./hooks/useCodexController";
 import { useThemeMode } from "./hooks/useThemeMode";
 import {
@@ -24,7 +22,6 @@ import {
 
 type AppTab = "accounts" | "analytics" | "proxy" | "settings";
 const APP_MENU_OPEN_SETTINGS_EVENT = "app-menu-open-settings";
-const APP_MENU_CHECK_UPDATE_EVENT = "app-menu-check-update";
 const APP_MENU_OPEN_QUOTA_ONBOARDING_EVENT = "app-menu-open-quota-onboarding";
 const TOKEN_USAGE_FRESHNESS_MS = 5 * 60 * 1000;
 
@@ -59,19 +56,13 @@ function App() {
     exportingAccounts,
     authBusy,
     switchingId,
+    completedSwitch,
     warmingAccountId,
     renamingAccountId,
     pendingDeleteId,
     deleteCandidate,
     deletingAccountId,
-    checkingUpdate,
-    installingUpdate,
-    updateProgress,
-    pendingUpdate,
-    updateDialogOpen,
-    skipPendingUpdateVersion,
     notice,
-    openExternalUrl,
     settings,
     settingsLoaded,
     installedEditorApps,
@@ -117,11 +108,6 @@ function App() {
     refreshCostAnalytics,
     exportCostAnalytics,
     onDeleteCodexSession,
-    checkForAppUpdate,
-    installPendingUpdate,
-    openDebugUpdateDialog,
-    openManualDownloadPage,
-    closeUpdateDialog,
     updateSettings,
     onOpenAddDialog,
     onReauthorizeAccount,
@@ -207,12 +193,6 @@ function App() {
             setActiveTab("settings");
           },
         );
-        const checkUpdateUnlisten = await listen<void>(
-          APP_MENU_CHECK_UPDATE_EVENT,
-          () => {
-            void checkForAppUpdate(false);
-          },
-        );
         const openQuotaOnboardingUnlisten = await listen<void>(
           APP_MENU_OPEN_QUOTA_ONBOARDING_EVENT,
           () => {
@@ -225,14 +205,12 @@ function App() {
 
         if (disposed) {
           void openSettingsUnlisten();
-          void checkUpdateUnlisten();
           void openQuotaOnboardingUnlisten();
           return;
         }
 
         unlistenFns.push(
           openSettingsUnlisten,
-          checkUpdateUnlisten,
           openQuotaOnboardingUnlisten,
         );
       } catch {
@@ -248,7 +226,7 @@ function App() {
         void unlisten();
       }
     };
-  }, [checkForAppUpdate, updateSettings]);
+  }, [updateSettings]);
 
   useEffect(() => {
     if (activeTab !== "accounts" || !mainWindowVisible) {
@@ -314,17 +292,6 @@ function App() {
 
         <NoticeBanner notice={notice} />
         <RemoteDeployProgressToast progress={remoteDeployProgress} />
-        <DebugFloatingTool onOpenUpdateDialog={openDebugUpdateDialog} />
-        <UpdateBanner
-          open={updateDialogOpen}
-          pendingUpdate={pendingUpdate}
-          updateProgress={updateProgress}
-          installingUpdate={installingUpdate}
-          onClose={closeUpdateDialog}
-          onManualDownload={() => void openManualDownloadPage()}
-          onSkipVersion={() => void skipPendingUpdateVersion()}
-          onInstallNow={() => void installPendingUpdate()}
-        />
         <QuotaDisplayOnboardingDialog
           open={shouldOpenQuotaOnboarding({
             platform: quotaOnboardingPlatform,
@@ -367,6 +334,8 @@ function App() {
                   />
                 }
                 accounts={accounts}
+                quotaDisplayMode={settings.accountQuotaDisplayMode}
+                completedSwitch={completedSwitch}
                 tokenUsage={tokenUsage}
                 tokenUsageError={tokenUsageError}
                 loading={loading}
@@ -520,9 +489,6 @@ function App() {
             <SettingsPanel
               themeMode={themeMode}
               onToggleTheme={toggleTheme}
-              checkingUpdate={checkingUpdate}
-              onCheckUpdate={() => void checkForAppUpdate(false)}
-              onOpenExternalUrl={(url) => void openExternalUrl(url)}
               settings={settings}
               accounts={accounts}
               installedEditorApps={installedEditorApps}

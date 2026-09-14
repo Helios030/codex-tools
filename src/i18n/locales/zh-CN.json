@@ -613,6 +613,9 @@
       "gradientNumber": "渐变数字",
       "numberProgressBar": "数字进度条",
       "logoProgressRing": "图标进度环",
+      "dualConcentricRing": "双同心圆环",
+      "dualTrackPill": "双轨数字胶囊",
+      "heroNumberDualBars": "数字与双能量条",
       "hidden": "不显示"
     },
     "macosTrayLogoRingVariants": {
@@ -642,7 +645,12 @@
       "description": "使用开关切换浅色和深色主题。",
       "switchAriaLabel": "切换主题",
       "dark": "深色",
-      "light": "浅色"
+      "light": "浅色",
+      "quotaStyleLabel": "账号额度样式",
+      "bars": "条形",
+      "dualArc": "双弧形",
+      "quotaStyleHint": "外层本周 · 内层5小时，均显示剩余额度。",
+      "quotaPreview": "样式预览（不执行切换）"
     },
     "projectInfo": {
       "versionLabel": "版本",

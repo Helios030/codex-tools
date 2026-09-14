@@ -53,6 +53,9 @@ pub(crate) async fn update_app_settings_internal(
         let _guard = state.store_lock.lock().await;
         let mut store = load_store(app)?;
 
+        if let Some(value) = patch.account_quota_display_mode {
+            store.settings.account_quota_display_mode = value;
+        }
         if let Some(value) = patch.launch_at_startup {
             previous_launch_at_startup = Some(store.settings.launch_at_startup);
             store.settings.launch_at_startup = value;

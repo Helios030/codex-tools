@@ -613,6 +613,9 @@
       "gradientNumber": "Gradient number",
       "numberProgressBar": "Number progress bar",
       "logoProgressRing": "App icon progress ring",
+      "dualConcentricRing": "Dual concentric rings",
+      "dualTrackPill": "Dual-track pill",
+      "heroNumberDualBars": "Number & dual bars",
       "hidden": "Hide icon"
     },
     "macosTrayLogoRingVariants": {
@@ -642,7 +645,12 @@
       "description": "Use the switch to toggle light and dark theme.",
       "switchAriaLabel": "Toggle theme",
       "dark": "Dark",
-      "light": "Light"
+      "light": "Light",
+      "quotaStyleLabel": "Account quota style",
+      "bars": "Bars",
+      "dualArc": "Dual arcs",
+      "quotaStyleHint": "Outer: weekly · Inner: 5-hour. Both show remaining quota.",
+      "quotaPreview": "Style preview (no switching)"
     },
     "projectInfo": {
       "versionLabel": "Current version",
