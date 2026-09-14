@@ -185,6 +185,123 @@ function buildImportNotice(
   };
 }
 
+function buildSwitchNotice(
+  result: SwitchAccountResult,
+  settings: AppSettings,
+  copy: MessageCatalog,
+  localizeError: (err: string) => string,
+): Notice {
+  if (result.noOp) {
+    if (result.providerSyncError) {
+      return {
+        type: "error",
+        message: copy.notices.providerSyncFailed(
+          copy.notices.accountAlreadyCurrent,
+          localizeError(result.providerSyncError),
+        ),
+      };
+    }
+    return {
+      type: "info",
+      message: copy.notices.accountAlreadyCurrent,
+    };
+  }
+
+  let baseNotice: Notice;
+  if (result.appLaunchError) {
+    baseNotice = {
+      type: "error",
+      message: `${copy.notices.switchedOnly}；${localizeError(result.appLaunchError)}`,
+    };
+  } else if (!settings.launchCodexAfterSwitch) {
+    baseNotice = { type: "ok", message: copy.notices.switchedOnly };
+  } else if (result.usedFallbackCli) {
+    baseNotice = {
+      type: "info",
+      message: copy.notices.switchedAndLaunchByCli,
+    };
+  } else {
+    baseNotice = {
+      type: "ok",
+      message: copy.notices.switchedAndLaunching,
+    };
+  }
+
+  if (settings.syncOpencodeOpenaiAuth) {
+    if (result.opencodeSyncError) {
+      baseNotice = {
+        type: "error",
+        message: copy.notices.opencodeSyncFailed(
+          baseNotice.message,
+          localizeError(result.opencodeSyncError),
+        ),
+      };
+    } else if (result.opencodeSynced) {
+      baseNotice = {
+        ...baseNotice,
+        message: copy.notices.opencodeSynced(baseNotice.message),
+      };
+    }
+
+    if (settings.restartOpencodeDesktopOnSwitch) {
+      if (result.opencodeDesktopRestartError) {
+        baseNotice = {
+          type: "error",
+          message: copy.notices.opencodeDesktopRestartFailed(
+            baseNotice.message,
+            localizeError(result.opencodeDesktopRestartError),
+          ),
+        };
+      } else if (result.opencodeDesktopRestarted) {
+        baseNotice = {
+          ...baseNotice,
+          message: copy.notices.opencodeDesktopRestarted(baseNotice.message),
+        };
+      }
+    }
+  }
+
+  if (settings.restartEditorsOnSwitch) {
+    if (result.editorRestartError) {
+      baseNotice = {
+        type: "error",
+        message: copy.notices.editorRestartFailed(
+          baseNotice.message,
+          localizeError(result.editorRestartError),
+        ),
+      };
+    } else if (result.restartedEditorApps.length > 0) {
+      const restartedLabels = result.restartedEditorApps
+        .map((id) => copy.editorAppLabels[id] ?? id)
+        .join(" / ");
+      baseNotice = {
+        ...baseNotice,
+        message: copy.notices.editorsRestarted(
+          baseNotice.message,
+          restartedLabels,
+        ),
+      };
+    } else {
+      baseNotice = {
+        ...baseNotice,
+        message: copy.notices.noEditorRestarted(baseNotice.message),
+      };
+    }
+  }
+
+  if (result.providerSyncError) {
+    baseNotice = {
+      type: "error",
+      message: copy.notices.providerSyncFailed(
+        baseNotice.message,
+        localizeError(result.providerSyncError),
+      ),
+    };
+  }
+
+  return baseNotice;
+}
+
 function buildRemoteProxyFallback(
   server: RemoteServerConfig,
   lastError: string,
@@ -1629,6 +1746,43 @@ export function useCodexController(
     };
   }, [applyImportResult, copy.notices, localizeError, localizeImportResult]);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+
+    void listen<SwitchAccountResult>("account-switched", (event) => {
+      if (disposed) {
+        return;
+      }
+      void loadAccounts();
+      void remoteProxyAutoRedeployRef.current();
+      if (!switchInFlightRef.current) {
+        const notice = buildSwitchNotice(
+          event.payload,
+          settings,
+          copy,
+          localizeError,
+        );
+        setNotice(notice);
+      }
+    })
+      .then((fn) => {
+        if (disposed) {
+          void fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        void unlisten();
+      }
+    };
+  }, [copy, settings, localizeError, loadAccounts]);
+
   const onOpenAddDialog = useCallback(() => {
     setOauthWaitingForCallback(false);
     setReauthorizeAccount(null);
@@ -2906,118 +3060,10 @@ export function useCodexController(
         );
         await loadAccounts();
 
-        if (result.noOp) {
-          // 兼容后端判定出的同账号 no-op，只刷新状态并提示当前账号。
-          if (result.providerSyncError) {
-            setNotice({
-              type: "error",
-              message: copy.notices.providerSyncFailed(
-                copy.notices.accountAlreadyCurrent,
-                localizeError(result.providerSyncError),
-              ),
-            });
-          } else {
-            setNotice({
-              type: "info",
-              message: copy.notices.accountAlreadyCurrent,
-            });
-          }
-          return false;
-        }
-
         void remoteProxyAutoRedeployRef.current();
-
-        let baseNotice: Notice;
-        if (!settings.launchCodexAfterSwitch) {
-          baseNotice = { type: "ok", message: copy.notices.switchedOnly };
-        } else if (result.usedFallbackCli) {
-          baseNotice = {
-            type: "info",
-            message: copy.notices.switchedAndLaunchByCli,
-          };
-        } else {
-          baseNotice = {
-            type: "ok",
-            message: copy.notices.switchedAndLaunching,
-          };
-        }
-
-        if (settings.syncOpencodeOpenaiAuth) {
-          if (result.opencodeSyncError) {
-            baseNotice = {
-              type: "error",
-              message: copy.notices.opencodeSyncFailed(
-                baseNotice.message,
-                localizeError(result.opencodeSyncError),
-              ),
-            };
-          } else if (result.opencodeSynced) {
-            baseNotice = {
-              ...baseNotice,
-              message: copy.notices.opencodeSynced(baseNotice.message),
-            };
-          }
-
-          if (settings.restartOpencodeDesktopOnSwitch) {
-            if (result.opencodeDesktopRestartError) {
-              baseNotice = {
-                type: "error",
-                message: copy.notices.opencodeDesktopRestartFailed(
-                  baseNotice.message,
-                  localizeError(result.opencodeDesktopRestartError),
-                ),
-              };
-            } else if (result.opencodeDesktopRestarted) {
-              baseNotice = {
-                ...baseNotice,
-                message: copy.notices.opencodeDesktopRestarted(
-                  baseNotice.message,
-                ),
-              };
-            }
-          }
-        }
-
-        if (settings.restartEditorsOnSwitch) {
-          if (result.editorRestartError) {
-            baseNotice = {
-              type: "error",
-              message: copy.notices.editorRestartFailed(
-                baseNotice.message,
-                localizeError(result.editorRestartError),
-              ),
-            };
-          } else if (result.restartedEditorApps.length > 0) {
-            const restartedLabels = result.restartedEditorApps
-              .map((id) => copy.editorAppLabels[id] ?? id)
-              .join(" / ");
-            baseNotice = {
-              ...baseNotice,
-              message: copy.notices.editorsRestarted(
-                baseNotice.message,
-                restartedLabels,
-              ),
-            };
-          } else {
-            baseNotice = {
-              ...baseNotice,
-              message: copy.notices.noEditorRestarted(baseNotice.message),
-            };
-          }
-        }
-
-        if (result.providerSyncError) {
-          baseNotice = {
-            type: "error",
-            message: copy.notices.providerSyncFailed(
-              baseNotice.message,
-              localizeError(result.providerSyncError),
-            ),
-          };
-        }
-
-        setNotice(baseNotice);
-        return true;
+        const notice = buildSwitchNotice(result, settings, copy, localizeError);
+        setNotice(notice);
+        return !result.noOp;
       } catch (error) {
         try {
           await loadAccounts();

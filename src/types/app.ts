@@ -191,6 +191,7 @@ export type SwitchAccountResult = {
   restartedEditorApps: EditorAppId[];
   editorRestartError: string | null;
   providerSyncError: string | null;
+  appLaunchError?: string | null;
 };
 
 export type PreparedOauthLogin = {

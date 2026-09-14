@@ -1,16 +1,38 @@
 @media (max-width: 1180px) {
   .accountsWorkspace {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(360px, 1fr) minmax(300px, auto);
     overflow: auto;
   }
 
   .accountListPanel {
-    min-height: 540px;
+    min-height: 0;
   }
 
   .accountDetailPanel {
-    min-height: 0;
-    overflow: visible;
+    min-height: 300px;
+    overflow: auto;
+  }
+
+  .accountToolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .accountSearch {
+    grid-column: 1 / -1;
+  }
+
+  .accountToolbarActions {
+    justify-self: end;
+  }
+
+  .accountListFrame {
+    overflow: auto;
+  }
+
+  .accountListHeader,
+  .accountRow {
+    min-width: 720px;
   }
 }
 
@@ -68,6 +90,19 @@
 
   .settingsOverlay {
     padding: 12px;
+  }
+
+  .accountsPage {
+    padding: 12px;
+  }
+
+  .accountsWorkspace {
+    grid-template-rows: minmax(0, 1fr) minmax(280px, 42dvh);
+    gap: 12px;
+  }
+
+  .accountDetailPanel {
+    min-height: 0;
   }
 
   .settingsDialog {
@@ -509,6 +544,50 @@
     bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
     right: 14px;
     width: calc(100vw - 28px);
+  }
+}
+
+/* Small panel: keep the primary task readable and let each region scroll. */
+@media (max-width: 620px) {
+  .accountsPage {
+    padding: 8px;
+  }
+
+  .accountsWorkspace {
+    grid-template-rows: minmax(360px, 1fr) minmax(260px, auto);
+  }
+
+  .accountListPanel,
+  .accountDetailPanel {
+    border-radius: 14px;
+  }
+
+  .accountToolbar {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .accountToolbarActions {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .accountToolbarActions .importBar {
+    justify-content: stretch;
+  }
+
+  .accountToolbarActions .importBar > * {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .accountFilters {
+    justify-content: stretch;
+  }
+
+  .accountFilters select {
+    min-width: 0;
+    flex: 1 1 0;
   }
 }
 

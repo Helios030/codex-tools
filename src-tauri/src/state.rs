@@ -84,10 +84,31 @@ pub(crate) struct OauthCallbackListenerHandle {
     pub(crate) task: Option<ThreadJoinHandle<()>>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SwitchInProgress {
+    pub(crate) target_account_id: String,
+    pub(crate) target_account_label: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct SwitchGuard {
+    state: Arc<std::sync::Mutex<Option<SwitchInProgress>>>,
+}
+
+impl Drop for SwitchGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.state.lock() {
+            *slot = None;
+        }
+    }
+}
+
 /// 全局运行态：
 /// - `store_lock` 保证账号存储读写的串行化。
 /// - `auth_operation_lock` 串行化 login/import/switch/token-refresh 等会改写 auth 的操作。
 /// - `account_warmup_lock` 防止手动和自动预热对同一批账号重复发起真实请求。
+/// - `switch_in_flight` 覆盖主窗口与状态栏全流程的账号切换防重入状态。
+/// - `recent_switch_error` 记录最近一次状态栏切换失败信息，供托盘菜单展示。
 /// - `pending_oauth_login` 维护当前 OAuth 授权会话。
 /// - `oauth_listener` 维护本地 OAuth 回调监听线程。
 /// - `api_proxy` 维护本地 API 反代服务的生命周期与状态。
@@ -96,6 +117,8 @@ pub(crate) struct AppState {
     pub(crate) store_lock: Arc<Mutex<()>>,
     pub(crate) auth_operation_lock: Arc<Mutex<()>>,
     pub(crate) account_warmup_lock: Mutex<()>,
+    pub(crate) switch_in_flight: Arc<std::sync::Mutex<Option<SwitchInProgress>>>,
+    pub(crate) recent_switch_error: std::sync::Mutex<Option<String>>,
     pub(crate) usage_refresh: Mutex<UsageRefreshCoordinator>,
     pub(crate) usage_surface_error: std::sync::Mutex<Option<String>>,
     pub(crate) pending_oauth_login: Mutex<Option<PendingOauthLogin>>,
@@ -111,6 +134,8 @@ impl Default for AppState {
             store_lock: Arc::new(Mutex::new(())),
             auth_operation_lock: Arc::new(Mutex::new(())),
             account_warmup_lock: Mutex::new(()),
+            switch_in_flight: Arc::new(std::sync::Mutex::new(None)),
+            recent_switch_error: std::sync::Mutex::new(None),
             usage_refresh: Mutex::new(UsageRefreshCoordinator::default()),
             usage_surface_error: std::sync::Mutex::new(None),
             pending_oauth_login: Mutex::new(None),
@@ -119,5 +144,51 @@ impl Default for AppState {
             api_proxy_usage_writer: Arc::new(Mutex::new(None)),
             cloudflared: Mutex::new(None),
         }
+    }
+}
+
+impl AppState {
+    pub(crate) fn try_begin_switch(
+        &self,
+        target_account_id: &str,
+        target_account_label: &str,
+    ) -> Result<SwitchGuard, String> {
+        let mut slot = self
+            .switch_in_flight
+            .lock()
+            .map_err(|_| "获取切换状态锁失败".to_string())?;
+        if let Some(in_progress) = slot.as_ref() {
+            return Err(format!(
+                "已有账号切换正在进行（目标：{}），请稍候。",
+                in_progress.target_account_label
+            ));
+        }
+        *slot = Some(SwitchInProgress {
+            target_account_id: target_account_id.to_string(),
+            target_account_label: target_account_label.to_string(),
+        });
+        Ok(SwitchGuard {
+            state: self.switch_in_flight.clone(),
+        })
+    }
+
+    pub(crate) fn current_switching_target(&self) -> Option<SwitchInProgress> {
+        self.switch_in_flight
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    pub(crate) fn set_recent_switch_error(&self, error: Option<String>) {
+        if let Ok(mut slot) = self.recent_switch_error.lock() {
+            *slot = error;
+        }
+    }
+
+    pub(crate) fn get_recent_switch_error(&self) -> Option<String> {
+        self.recent_switch_error
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 }

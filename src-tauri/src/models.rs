@@ -283,6 +283,7 @@ pub(crate) struct SwitchAccountResult {
     pub(crate) restarted_editor_apps: Vec<EditorAppId>,
     pub(crate) editor_restart_error: Option<String>,
     pub(crate) provider_sync_error: Option<String>,
+    pub(crate) app_launch_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -656,6 +657,20 @@ pub(crate) enum EditorAppId {
     Kiro,
     Trae,
     Qoder,
+}
+
+impl EditorAppId {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Vscode => "VS Code",
+            Self::VscodeInsiders => "VS Code Insiders",
+            Self::Cursor => "Cursor",
+            Self::Antigravity => "Antigravity",
+            Self::Kiro => "Kiro",
+            Self::Trae => "Trae",
+            Self::Qoder => "Qoder",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

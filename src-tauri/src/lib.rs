@@ -90,6 +90,7 @@ const PERIODIC_USAGE_REFRESHED_EVENT: &str = "periodic-usage-refreshed";
 const APP_MENU_OPEN_QUOTA_ONBOARDING_EVENT: &str = "app-menu-open-quota-onboarding";
 const CODEX_COST_ANALYTICS_PROGRESS_EVENT: &str = "codex-cost-analytics-progress";
 const MAIN_WINDOW_VISIBILITY_CHANGED_EVENT: &str = "main-window-visibility-changed";
+pub(crate) const ACCOUNT_SWITCHED_EVENT: &str = "account-switched";
 const CODEX_COST_ANALYTICS_CACHE_FILE: &str = "codex-cost-analytics-cache.json";
 const APP_MENU_SETTINGS_ID: &str = "app_menu_settings";
 const APP_MENU_CHECK_UPDATES_ID: &str = "app_menu_check_updates";
@@ -1788,184 +1789,48 @@ async fn switch_account_and_launch(
     restart_editors_on_switch: Option<bool>,
     restart_editor_targets: Option<Vec<EditorAppId>>,
 ) -> Result<SwitchAccountResult, String> {
+    execute_switch_account_flow(
+        &app,
+        state.inner(),
+        &id,
+        workspace_path,
+        launch_codex,
+        restart_editors_on_switch,
+        restart_editor_targets,
+    )
+    .await
+}
+
+pub(crate) async fn execute_switch_account_flow(
+    app: &AppHandle,
+    state: &AppState,
+    id: &str,
+    workspace_path: Option<String>,
+    launch_codex: Option<bool>,
+    restart_editors_on_switch: Option<bool>,
+    restart_editor_targets: Option<Vec<EditorAppId>>,
+) -> Result<SwitchAccountResult, String> {
     #[cfg(target_os = "windows")]
     let _timing = switch_timing::Phase::start("switch_handler");
-    let should_launch_codex = launch_codex.unwrap_or(true);
-    #[cfg(target_os = "windows")]
-    let windows_launch_plan;
-    let (
-        account,
-        should_sync_opencode,
-        should_restart_opencode_desktop,
-        should_restart_editors,
-        effective_restart_targets,
-        configured_codex_launch_path,
-        launch_codex_as_admin,
-    ) = {
-        let _auth_guard = state.auth_operation_lock.lock().await;
-        ensure_no_pending_auth_operation(state.inner()).await?;
-        let store = {
-            let _guard = state.store_lock.lock().await;
-            store::load_store(&app)?
-        };
 
-        let mut account = store
+    let target_label = {
+        let _guard = state.store_lock.lock().await;
+        let store = store::load_store(app)?;
+        store
             .accounts
             .iter()
             .find(|account| account.id == id)
-            .cloned()
-            .ok_or_else(|| "找不到要切换的账号".to_string())?;
-        let mut refreshed_auth_updated_at = None;
+            .map(|account| account.label.clone())
+            .ok_or_else(|| "找不到要切换的账号".to_string())?
+    };
 
-        let current_account_key = auth::current_auth_account_key();
-        let current_variant_key = auth::current_auth_variant_key();
-        if should_noop_switch_account(
-            &store,
-            &account,
-            current_account_key.as_deref(),
-            current_variant_key.as_deref(),
-        ) {
-            let mut result = noop_switch_account_result(&account);
-            result.provider_sync_error = provider_sync::sync_current_provider(None)
-                .err()
-                .map(|error| format!("同步 Codex 历史 provider 元数据失败: {error}"));
-            return Ok(result);
-        }
+    let _switch_guard = state.try_begin_switch(id, &target_label)?;
+    let _ = tray::refresh_usage_surfaces_snapshot(app);
 
-        if matches!(account.source_kind, models::AccountSourceKind::Chatgpt) {
-            let account_key = account.account_key();
-            let latest_auth = account_service::refresh_latest_auth_json_if_newer(
-                &app,
-                state.inner(),
-                &account_key,
-                &account.auth_json,
-            )
-            .await;
-            let mut auth_snapshot_changed = latest_auth != account.auth_json;
-            account.auth_json = latest_auth;
-
-            if auth::auth_tokens_need_refresh(&account.auth_json) {
-                if account.auth_refresh_blocked {
-                    return Err(format!(
-                        "切换账号前刷新登录令牌失败: {}",
-                        account.auth_refresh_error.clone().unwrap_or_else(|| {
-                            "工具保存的授权快照已失效，请重新登录授权。".to_string()
-                        })
-                    ));
-                }
-
-                match auth::refresh_chatgpt_auth_tokens(&account.auth_json).await {
-                    Ok(refreshed_auth) => {
-                        account.auth_json = refreshed_auth;
-                        auth_snapshot_changed = true;
-                    }
-                    Err(error) => {
-                        // stale/reused/revoked 先尝试复用本地较新的快照，避免把并发刷新误判成永久失效。
-                        if let Some(recovered) =
-                            account_service::recover_refresh_failure_from_latest_snapshot(
-                                &app,
-                                state.inner(),
-                                &account_key,
-                                &account.auth_json,
-                                &error,
-                            )
-                            .await
-                        {
-                            account.auth_json = recovered;
-                            auth_snapshot_changed = true;
-                        } else {
-                            let normalized_error = normalize_switch_refresh_error(&error);
-                            let should_block_refresh = normalized_error
-                                == "当前账号的 refresh_token 已失效或已被轮换，请重新登录授权。"
-                                || normalized_error == "当前账号授权已过期，请重新登录授权。";
-
-                            if should_block_refresh {
-                                let blocked_message = "工具保存的授权快照已失效，请重新登录授权。";
-                                if let Err(persist_error) = persist_switch_refresh_blocked(
-                                    &app,
-                                    state.inner(),
-                                    &account_key,
-                                    blocked_message,
-                                )
-                                .await
-                                {
-                                    log::warn!("切换失败后写回账号停刷状态失败: {persist_error}");
-                                }
-                            }
-
-                            return Err(format!("切换账号前刷新登录令牌失败: {normalized_error}"));
-                        }
-                    }
-                }
-            }
-
-            if auth_snapshot_changed {
-                refreshed_auth_updated_at = Some(utils::now_unix_seconds());
-            }
-        }
-
-        let should_sync_opencode = store.settings.sync_opencode_openai_auth;
-        let should_restart_opencode_desktop =
-            should_sync_opencode && store.settings.restart_opencode_desktop_on_switch;
-        let should_restart_editors =
-            restart_editors_on_switch.unwrap_or(store.settings.restart_editors_on_switch);
-        let effective_restart_targets =
-            restart_editor_targets.unwrap_or_else(|| store.settings.restart_editor_targets.clone());
-        let configured_codex_launch_path = store.settings.codex_launch_path.clone();
-        let launch_codex_as_admin = store.settings.launch_codex_as_admin;
+    let run_flow = async {
         #[cfg(target_os = "windows")]
-        {
-            windows_launch_plan = if should_launch_codex {
-                Some(cli::prepare_windows_codex_launch(
-                    configured_codex_launch_path.as_deref(),
-                    launch_codex_as_admin,
-                )?)
-            } else {
-                None
-            };
-        }
-        if should_launch_codex {
-            // Stop the desktop client before capturing its final rotated token and
-            // replacing auth.json. Otherwise a late refresh can be lost on switch.
-            #[cfg(target_os = "windows")]
-            if let Some(plan) = &windows_launch_plan {
-                plan.stop_desktop()?;
-            }
-            #[cfg(not(target_os = "windows"))]
-            force_stop_running_codex()?;
-        }
-        {
-            let _guard = state.store_lock.lock().await;
-            let mut latest_store = store::load_store(&app)?;
-            let store_path =
-                store::account_store_path_from_data_dir(&app_paths::app_data_dir(&app)?);
-            if let Some(active_id) = latest_store.settings.active_account_id.clone() {
-                if active_id != id {
-                    capture_current_auth_for_active_profile(&store_path, &mut latest_store)?;
-                    // 先保存当前账号在 Codex 内产生的配置改动，再应用目标 profile。
-                    profile_files::capture_current_config_for_profile(&store_path, &active_id)?;
-                }
-            }
-            let stored_account = latest_store
-                .accounts
-                .iter_mut()
-                .find(|stored| stored.id == id)
-                .ok_or_else(|| "找不到要切换的账号".to_string())?;
-            if let Some(refreshed_at) = refreshed_auth_updated_at {
-                stored_account.auth_json = account.auth_json.clone();
-                stored_account.updated_at = refreshed_at;
-                stored_account.auth_refresh_blocked = false;
-                stored_account.auth_refresh_error = None;
-            }
-            profile_files::sync_account_profile_in_store_path(&store_path, stored_account)?;
-            profile_files::apply_account_profile(stored_account)?;
-            latest_store.settings.active_account_id = Some(stored_account.id.clone());
-            account = stored_account.clone();
-            store::save_store(&app, &latest_store)?;
-        }
-        let _ = tray::refresh_usage_surfaces_snapshot(&app);
-
-        (
+        let windows_launch_plan;
+        let (
             account,
             should_sync_opencode,
             should_restart_opencode_desktop,
@@ -1973,57 +1838,329 @@ async fn switch_account_and_launch(
             effective_restart_targets,
             configured_codex_launch_path,
             launch_codex_as_admin,
-        )
-    };
+            should_launch_codex,
+        ) = {
+            let _auth_guard = state.auth_operation_lock.lock().await;
+            ensure_no_pending_auth_operation(state).await?;
+            let store = {
+                let _guard = state.store_lock.lock().await;
+                store::load_store(app)?
+            };
 
-    let provider_sync_error = provider_sync::sync_current_provider(None)
-        .err()
-        .map(|error| format!("同步 Codex 历史 provider 元数据失败: {error}"));
+            let mut account = store
+                .accounts
+                .iter()
+                .find(|account| account.id == id)
+                .cloned()
+                .ok_or_else(|| "找不到要切换的账号".to_string())?;
+            let mut refreshed_auth_updated_at = None;
 
-    let mut opencode_synced = false;
-    let mut opencode_sync_error = None;
-    let mut opencode_desktop_restarted = false;
-    let mut opencode_desktop_restart_error = None;
-    if should_sync_opencode {
-        match if matches!(account.source_kind, models::AccountSourceKind::Chatgpt) {
-            opencode::sync_openai_auth_from_codex_auth(&account.auth_json)
-        } else {
-            Err("当前条目为 API 中转站配置，无法同步为 opencode 的 OAuth 登录态。".to_string())
-        } {
-            Ok(()) => {
-                opencode_synced = true;
-                if should_restart_opencode_desktop {
-                    match opencode::restart_opencode_desktop_app() {
-                        Ok(()) => {
-                            opencode_desktop_restarted = true;
+            let current_account_key = auth::current_auth_account_key();
+            let current_variant_key = auth::current_auth_variant_key();
+            if should_noop_switch_account(
+                &store,
+                &account,
+                current_account_key.as_deref(),
+                current_variant_key.as_deref(),
+            ) {
+                let mut result = noop_switch_account_result(&account);
+                result.provider_sync_error = provider_sync::sync_current_provider(None)
+                    .err()
+                    .map(|error| format!("同步 Codex 历史 provider 元数据失败: {error}"));
+                return Ok(result);
+            }
+
+            if matches!(account.source_kind, models::AccountSourceKind::Chatgpt) {
+                let account_key = account.account_key();
+                let latest_auth = account_service::refresh_latest_auth_json_if_newer(
+                    app,
+                    state,
+                    &account_key,
+                    &account.auth_json,
+                )
+                .await;
+                let mut auth_snapshot_changed = latest_auth != account.auth_json;
+                account.auth_json = latest_auth;
+
+                if auth::auth_tokens_need_refresh(&account.auth_json) {
+                    if account.auth_refresh_blocked {
+                        return Err(format!(
+                            "切换账号前刷新登录令牌失败: {}",
+                            account.auth_refresh_error.clone().unwrap_or_else(|| {
+                                "工具保存的授权快照已失效，请重新登录授权。".to_string()
+                            })
+                        ));
+                    }
+
+                    match auth::refresh_chatgpt_auth_tokens(&account.auth_json).await {
+                        Ok(refreshed_auth) => {
+                            account.auth_json = refreshed_auth;
+                            auth_snapshot_changed = true;
                         }
-                        Err(err) => {
-                            log::warn!("重启 opencode 桌面端失败: {err}");
-                            opencode_desktop_restart_error = Some(err);
+                        Err(error) => {
+                            if let Some(recovered) =
+                                account_service::recover_refresh_failure_from_latest_snapshot(
+                                    app,
+                                    state,
+                                    &account_key,
+                                    &account.auth_json,
+                                    &error,
+                                )
+                                .await
+                            {
+                                account.auth_json = recovered;
+                                auth_snapshot_changed = true;
+                            } else {
+                                let normalized_error = normalize_switch_refresh_error(&error);
+                                let should_block_refresh = normalized_error
+                                    == "当前账号的 refresh_token 已失效或已被轮换，请重新登录授权。"
+                                    || normalized_error == "当前账号授权已过期，请重新登录授权。";
+
+                                if should_block_refresh {
+                                    let blocked_message =
+                                        "工具保存的授权快照已失效，请重新登录授权。";
+                                    if let Err(persist_error) = persist_switch_refresh_blocked(
+                                        app,
+                                        state,
+                                        &account_key,
+                                        blocked_message,
+                                    )
+                                    .await
+                                    {
+                                        log::warn!("切换失败后写回账号停刷状态失败: {persist_error}");
+                                    }
+                                }
+
+                                return Err(format!(
+                                    "切换账号前刷新登录令牌失败: {normalized_error}"
+                                ));
+                            }
                         }
                     }
                 }
+
+                if auth_snapshot_changed {
+                    refreshed_auth_updated_at = Some(utils::now_unix_seconds());
+                }
             }
-            Err(err) => {
-                log::warn!("同步 opencode OpenAI 认证失败: {err}");
-                opencode_sync_error = Some(err);
+
+            let should_launch_codex =
+                launch_codex.unwrap_or(store.settings.launch_codex_after_switch);
+            let should_sync_opencode = store.settings.sync_opencode_openai_auth;
+            let should_restart_opencode_desktop =
+                should_sync_opencode && store.settings.restart_opencode_desktop_on_switch;
+            let should_restart_editors =
+                restart_editors_on_switch.unwrap_or(store.settings.restart_editors_on_switch);
+            let effective_restart_targets = restart_editor_targets
+                .unwrap_or_else(|| store.settings.restart_editor_targets.clone());
+            let configured_codex_launch_path = store.settings.codex_launch_path.clone();
+            let launch_codex_as_admin = store.settings.launch_codex_as_admin;
+            #[cfg(target_os = "windows")]
+            {
+                windows_launch_plan = if should_launch_codex {
+                    Some(cli::prepare_windows_codex_launch(
+                        configured_codex_launch_path.as_deref(),
+                        launch_codex_as_admin,
+                    )?)
+                } else {
+                    None
+                };
+            }
+            if should_launch_codex {
+                #[cfg(target_os = "windows")]
+                if let Some(plan) = &windows_launch_plan {
+                    plan.stop_desktop()?;
+                }
+                #[cfg(not(target_os = "windows"))]
+                force_stop_running_codex()?;
+            }
+            {
+                let _guard = state.store_lock.lock().await;
+                let mut latest_store = store::load_store(app)?;
+                let store_path =
+                    store::account_store_path_from_data_dir(&app_paths::app_data_dir(app)?);
+                if let Some(active_id) = latest_store.settings.active_account_id.clone() {
+                    if active_id != id {
+                        capture_current_auth_for_active_profile(&store_path, &mut latest_store)?;
+                        profile_files::capture_current_config_for_profile(&store_path, &active_id)?;
+                    }
+                }
+                let stored_account = latest_store
+                    .accounts
+                    .iter_mut()
+                    .find(|stored| stored.id == id)
+                    .ok_or_else(|| "找不到要切换的账号".to_string())?;
+                if let Some(refreshed_at) = refreshed_auth_updated_at {
+                    stored_account.auth_json = account.auth_json.clone();
+                    stored_account.updated_at = refreshed_at;
+                    stored_account.auth_refresh_blocked = false;
+                    stored_account.auth_refresh_error = None;
+                }
+                profile_files::sync_account_profile_in_store_path(&store_path, stored_account)?;
+                profile_files::apply_account_profile(stored_account)?;
+                latest_store.settings.active_account_id = Some(stored_account.id.clone());
+                account = stored_account.clone();
+                store::save_store(app, &latest_store)?;
+            }
+            let _ = tray::refresh_usage_surfaces_snapshot(app);
+
+            (
+                account,
+                should_sync_opencode,
+                should_restart_opencode_desktop,
+                should_restart_editors,
+                effective_restart_targets,
+                configured_codex_launch_path,
+                launch_codex_as_admin,
+                should_launch_codex,
+            )
+        };
+
+        let provider_sync_error = provider_sync::sync_current_provider(None)
+            .err()
+            .map(|error| format!("同步 Codex 历史 provider 元数据失败: {error}"));
+
+        let mut opencode_synced = false;
+        let mut opencode_sync_error = None;
+        let mut opencode_desktop_restarted = false;
+        let mut opencode_desktop_restart_error = None;
+        if should_sync_opencode {
+            match if matches!(account.source_kind, models::AccountSourceKind::Chatgpt) {
+                opencode::sync_openai_auth_from_codex_auth(&account.auth_json)
+            } else {
+                Err("当前条目为 API 中转站配置，无法同步为 opencode 的 OAuth 登录态。".to_string())
+            } {
+                Ok(()) => {
+                    opencode_synced = true;
+                    if should_restart_opencode_desktop {
+                        match opencode::restart_opencode_desktop_app() {
+                            Ok(()) => {
+                                opencode_desktop_restarted = true;
+                            }
+                            Err(err) => {
+                                log::warn!("重启 opencode 桌面端失败: {err}");
+                                opencode_desktop_restart_error = Some(err);
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    log::warn!("同步 opencode OpenAI 认证失败: {err}");
+                    opencode_sync_error = Some(err);
+                }
             }
         }
-    }
 
-    let (restarted_editor_apps, editor_restart_error) = if should_restart_editors {
-        editor_apps::restart_selected_editor_apps(&effective_restart_targets)
-    } else {
-        (Vec::new(), None)
-    };
+        let (restarted_editor_apps, editor_restart_error) = if should_restart_editors {
+            editor_apps::restart_selected_editor_apps(&effective_restart_targets)
+        } else {
+            (Vec::new(), None)
+        };
 
-    // 向后兼容：旧前端未传参数时仍按“切换并启动”处理。
-    if !should_launch_codex {
-        return Ok(SwitchAccountResult {
+        if !should_launch_codex {
+            return Ok(SwitchAccountResult {
+                account_id: account.account_id,
+                no_op: false,
+                launched_app_path: None,
+                used_fallback_cli: false,
+                opencode_synced,
+                opencode_sync_error,
+                opencode_desktop_restarted,
+                opencode_desktop_restart_error,
+                restarted_editor_apps,
+                editor_restart_error,
+                provider_sync_error,
+                app_launch_error: None,
+            });
+        }
+
+        #[cfg(target_os = "windows")]
+        let (launched_app_path, used_fallback_cli, app_launch_error) = {
+            let _ = (configured_codex_launch_path, launch_codex_as_admin);
+            match windows_launch_plan
+                .ok_or_else(|| "缺少切换前已验证的 Windows 启动目标。".to_string())
+                .and_then(|plan| plan.launch(workspace_path.as_deref()))
+            {
+                Ok((path, fallback)) => (path, fallback, None),
+                Err(err) => (None, false, Some(format!("当前账号已切换，但桌面未能启动：{err}"))),
+            }
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let (launched_app_path, used_fallback_cli, app_launch_error) = {
+            if let Some(path) =
+                cli::find_configured_codex_app_path(configured_codex_launch_path.as_deref())
+                    .or_else(cli::find_codex_app_path)
+            {
+                match launch_codex_app(&path, workspace_path.as_deref(), launch_codex_as_admin) {
+                    Ok(()) => (Some(path.to_string_lossy().to_string()), false, None),
+                    Err(error) => {
+                        log::warn!("通过 Codex 应用路径启动失败 {}: {}", path.display(), error);
+                        let fallback_err = error;
+                        let cmd =
+                            cli::new_codex_command(configured_codex_launch_path.as_deref());
+                        match cmd {
+                            Ok(mut cmd) => {
+                                cmd.arg("app");
+                                if let Some(workspace) = workspace_path.as_deref() {
+                                    cmd.arg(workspace);
+                                }
+                                match cmd.spawn() {
+                                    Ok(_) => (None, true, None),
+                                    Err(cli_err) => (
+                                        None,
+                                        false,
+                                        Some(format!(
+                                            "通过应用启动失败: {fallback_err}; CLI 启动失败: {cli_err}"
+                                        )),
+                                    ),
+                                }
+                            }
+                            Err(cli_err) => (
+                                None,
+                                false,
+                                Some(format!(
+                                    "通过应用启动失败: {fallback_err}; 查找 CLI 失败: {cli_err}"
+                                )),
+                            ),
+                        }
+                    }
+                }
+            } else {
+                let cmd = cli::new_codex_command(configured_codex_launch_path.as_deref());
+                match cmd {
+                    Ok(mut cmd) => {
+                        cmd.arg("app");
+                        if let Some(workspace) = workspace_path.as_deref() {
+                            cmd.arg(workspace);
+                        }
+                        match cmd.spawn() {
+                            Ok(_) => (None, true, None),
+                            Err(cli_err) => (
+                                None,
+                                false,
+                                Some(format!(
+                                    "未检测到本地 Codex 应用，且通过 codex app 启动失败: {cli_err}"
+                                )),
+                            ),
+                        }
+                    }
+                    Err(cli_err) => (
+                        None,
+                        false,
+                        Some(format!(
+                            "未检测到本地 Codex 应用，且查找 CLI 失败: {cli_err}"
+                        )),
+                    ),
+                }
+            }
+        };
+
+        Ok(SwitchAccountResult {
             account_id: account.account_id,
             no_op: false,
-            launched_app_path: None,
-            used_fallback_cli: false,
+            launched_app_path,
+            used_fallback_cli,
             opencode_synced,
             opencode_sync_error,
             opencode_desktop_restarted,
@@ -2031,63 +2168,26 @@ async fn switch_account_and_launch(
             restarted_editor_apps,
             editor_restart_error,
             provider_sync_error,
-        });
-    }
-
-    #[cfg(target_os = "windows")]
-    let (launched_app_path, used_fallback_cli) = {
-        let _ = (configured_codex_launch_path, launch_codex_as_admin);
-        windows_launch_plan
-            .ok_or_else(|| "缺少切换前已验证的 Windows 启动目标。".to_string())?
-            .launch(workspace_path.as_deref())
-            .map_err(|error| format!("当前账号已切换，但桌面未能启动：{error}"))?
+            app_launch_error,
+        })
     };
 
-    #[cfg(not(target_os = "windows"))]
-    let (launched_app_path, used_fallback_cli) = (|| -> Result<(Option<String>, bool), String> {
-        let mut app_launch_error = None;
-        if let Some(path) =
-            cli::find_configured_codex_app_path(configured_codex_launch_path.as_deref())
-                .or_else(cli::find_codex_app_path)
-        {
-            match launch_codex_app(&path, workspace_path.as_deref(), launch_codex_as_admin) {
-                Ok(()) => return Ok((Some(path.to_string_lossy().to_string()), false)),
-                Err(error) => {
-                    log::warn!("通过 Codex 应用路径启动失败 {}: {}", path.display(), error);
-                    app_launch_error = Some(error);
-                }
-            }
-        }
-        let format_error = |error: String| match &app_launch_error {
-            Some(previous) => format!(
-                "通过 Codex 应用路径启动失败: {previous}；且通过 codex app 启动失败: {error}"
-            ),
-            None => format!("未检测到本地 Codex 应用，且通过 codex app 启动失败: {error}"),
-        };
-        let mut cmd = cli::new_codex_command(configured_codex_launch_path.as_deref())
-            .map_err(&format_error)?;
-        cmd.arg("app");
-        if let Some(workspace) = workspace_path.as_deref() {
-            cmd.arg(workspace);
-        }
-        cmd.spawn()
-            .map_err(|error| format_error(error.to_string()))?;
-        Ok((None, true))
-    })()?;
+    let result: Result<SwitchAccountResult, String> = run_flow.await;
+    drop(_switch_guard);
 
-    Ok(SwitchAccountResult {
-        account_id: account.account_id,
-        no_op: false,
-        launched_app_path,
-        used_fallback_cli,
-        opencode_synced,
-        opencode_sync_error,
-        opencode_desktop_restarted,
-        opencode_desktop_restart_error,
-        restarted_editor_apps,
-        editor_restart_error,
-        provider_sync_error,
-    })
+    match result {
+        Ok(res) => {
+            state.set_recent_switch_error(None);
+            let _ = tray::refresh_usage_surfaces_snapshot(app);
+            let _ = app.emit(ACCOUNT_SWITCHED_EVENT, &res);
+            Ok(res)
+        }
+        Err(err) => {
+            state.set_recent_switch_error(Some(err.clone()));
+            let _ = tray::refresh_usage_surfaces_snapshot(app);
+            Err(err)
+        }
+    }
 }
 
 fn should_capture_current_auth_for_active_profile(
@@ -2177,6 +2277,7 @@ fn noop_switch_account_result(account: &StoredAccount) -> SwitchAccountResult {
         restarted_editor_apps: Vec::new(),
         editor_restart_error: None,
         provider_sync_error: None,
+        app_launch_error: None,
     }
 }
 

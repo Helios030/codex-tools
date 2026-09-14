@@ -49,6 +49,10 @@ const TRAY_MENU_QUIT_ID: &str = "tray_quit";
 #[cfg(target_os = "macos")]
 const TRAY_MENU_REFRESH_ID: &str = "tray_refresh_usage";
 #[cfg(target_os = "macos")]
+const TRAY_MENU_SWITCH_PREFIX: &str = "tray_switch_account::";
+#[cfg(target_os = "macos")]
+const TRAY_MENU_VIEW_ERROR_ID: &str = "tray_view_switch_error";
+#[cfg(target_os = "macos")]
 const MACOS_LEGACY_STATUS_ICON: tauri::image::Image<'_> = tauri::include_image!("./icons/icon.png");
 #[cfg(target_os = "windows")]
 const TRAY_ID: &str = "codex_tools_tray";
@@ -691,26 +695,93 @@ fn build_macos_tray_menu(
     menu.append(&header)
         .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
 
-    let current_line = if let Some(current) = accounts.iter().find(|account| account.is_current) {
-        format!(
-            "{}: {}",
-            i18n::tray_current_account_label(locale),
-            tray_account_usage_line(current, mode, locale)
-        )
+    let state = app.state::<AppState>();
+    let current_switching = state.current_switching_target();
+    let is_switching = current_switching.is_some();
+
+    if let Some(switching) = &current_switching {
+        let switching_item = MenuItem::with_id(
+            "tray_switching_status",
+            format!("⏳ {}", i18n::tray_switching_to(locale, &switching.target_account_label)),
+            false,
+            None,
+        );
+        menu.append(&switching_item)
+            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
     } else {
-        format!(
-            "{}: {}",
-            i18n::tray_current_account_label(locale),
-            i18n::tray_no_current(locale)
-        )
-    };
-    let current_item = MenuItem::with_id("tray_current_summary", current_line, false, None);
-    menu.append(&current_item)
-        .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+        let current_line = if let Some(current) = accounts.iter().find(|account| account.is_current) {
+            format!(
+                "{}: {}",
+                i18n::tray_current_account_label(locale),
+                tray_account_usage_line(current, mode, locale)
+            )
+        } else {
+            format!(
+                "{}: {}",
+                i18n::tray_current_account_label(locale),
+                i18n::tray_no_current(locale)
+            )
+        };
+        let current_item = MenuItem::with_id("tray_current_summary", current_line, false, None);
+        menu.append(&current_item)
+            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+    }
+
+    if let Some(recent_err) = state.get_recent_switch_error() {
+        let error_item = MenuItem::with_id(
+            "tray_recent_error",
+            i18n::tray_switch_failed(locale, &recent_err),
+            false,
+            None,
+        );
+        menu.append(&error_item)
+            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+
+        let details_item = MenuItem::with_id(
+            TRAY_MENU_VIEW_ERROR_ID,
+            format!("👉 {}", i18n::tray_view_details(locale)),
+            true,
+            None,
+        );
+        menu.append(&details_item)
+            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+    }
 
     let separator = PredefinedMenuItem::separator();
     menu.append(&separator)
         .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+
+    if let Ok(store) = load_store(app) {
+        let mut action_descriptions = Vec::new();
+        if store.settings.launch_codex_after_switch {
+            action_descriptions.push(i18n::tray_action_launch_codex(locale).to_string());
+        }
+        if store.settings.restart_editors_on_switch && !store.settings.restart_editor_targets.is_empty() {
+            let editor_names: Vec<&str> = store
+                .settings
+                .restart_editor_targets
+                .iter()
+                .map(|id| id.label())
+                .collect();
+            action_descriptions.push(i18n::tray_action_restart_editors(
+                locale,
+                &editor_names.join(", "),
+            ));
+        }
+        if !action_descriptions.is_empty() {
+            let action_hint = format!(
+                "{}: {}",
+                i18n::tray_switch_action_prefix(locale),
+                action_descriptions.join(" · ")
+            );
+            let action_item = MenuItem::with_id("tray_switch_hint", action_hint, false, None);
+            menu.append(&action_item)
+                .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+            let sep = PredefinedMenuItem::separator();
+            menu.append(&sep)
+                .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+        }
+    }
 
     if accounts.is_empty() {
         let empty = MenuItem::with_id(
@@ -722,12 +793,20 @@ fn build_macos_tray_menu(
         menu.append(&empty)
             .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
     } else {
-        for (index, account) in accounts.iter().enumerate() {
-            let id = format!("tray_account_{index}");
+        for account in accounts.iter() {
+            let id = format!("{TRAY_MENU_SWITCH_PREFIX}{}", account.id);
+            let raw_text = tray_account_usage_line(account, mode, locale);
+            let (label_text, enabled) = if is_switching {
+                (raw_text, false)
+            } else if account.is_current {
+                (format!("✓ {raw_text}"), false)
+            } else {
+                (raw_text, true)
+            };
             let line_item = MenuItem::with_id(
                 id,
-                tray_account_usage_line(account, mode, locale),
-                false,
+                label_text,
+                enabled,
                 None,
             );
             menu.append(&line_item)
@@ -742,7 +821,7 @@ fn build_macos_tray_menu(
     let refresh = MenuItem::with_id(
         TRAY_MENU_REFRESH_ID,
         i18n::tray_refresh_now(locale),
-        true,
+        !is_switching,
         None,
     );
     let open = MenuItem::with_id(TRAY_MENU_OPEN_ID, i18n::tray_open_app(locale), true, None);
@@ -1510,6 +1589,15 @@ pub(crate) fn handle_status_bar_menu_event(app: &AppHandle, event: tauri::menu::
     }
 
     #[cfg(target_os = "macos")]
+    if id == TRAY_MENU_VIEW_ERROR_ID {
+        let state = app.state::<AppState>();
+        state.set_recent_switch_error(None);
+        crate::restore_main_window(app);
+        let _ = refresh_usage_surfaces_snapshot(app);
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
     if id == TRAY_MENU_REFRESH_ID {
         let app_handle = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -1519,6 +1607,29 @@ pub(crate) fn handle_status_bar_menu_event(app: &AppHandle, event: tauri::menu::
                     .await
             {
                 let _ = update_macos_tray_snapshot(&app_handle, &summaries);
+            }
+        });
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(account_id) = id.strip_prefix(TRAY_MENU_SWITCH_PREFIX) {
+        let account_id = account_id.to_string();
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app_handle.state::<AppState>();
+            if let Err(err) = crate::execute_switch_account_flow(
+                &app_handle,
+                state.inner(),
+                &account_id,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            {
+                log::warn!("状态栏切换账号失败: {err}");
             }
         });
     }
@@ -1863,5 +1974,30 @@ mod tests {
             None
         );
         assert_eq!(quota_icon_percent(&[account]), Some(40.0));
+    }
+
+    #[test]
+    fn state_switch_in_flight_guard_blocks_concurrent_switch_and_releases_on_drop() {
+        use crate::state::AppState;
+
+        let state = AppState::default();
+        assert!(state.current_switching_target().is_none());
+
+        let guard1 = state.try_begin_switch("acc_1", "Work Account");
+        assert!(guard1.is_ok());
+        let current = state.current_switching_target().expect("switching target");
+        assert_eq!(current.target_account_id, "acc_1");
+        assert_eq!(current.target_account_label, "Work Account");
+
+        let guard2 = state.try_begin_switch("acc_2", "Personal Account");
+        assert!(guard2.is_err());
+        assert!(guard2.unwrap_err().contains("已有账号切换正在进行"));
+
+        drop(guard1);
+        assert!(state.current_switching_target().is_none());
+
+        let guard3 = state.try_begin_switch("acc_2", "Personal Account");
+        assert!(guard3.is_ok());
+        drop(guard3);
     }
 }
