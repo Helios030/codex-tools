@@ -287,7 +287,6 @@ function App() {
               ? costAnalyticsLoading
               : refreshing || refreshingTokenUsage
           }
-          onGoHome={() => setActiveTab("accounts")}
           showRefresh={activeTab === "accounts" || activeTab === "analytics"}
         />
 

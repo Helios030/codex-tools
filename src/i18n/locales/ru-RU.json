@@ -181,6 +181,14 @@
     "deleting": "Удаление"
   },
   "accountsGrid": {
+    "compactExhausted": "Исчерпано",
+    "compactIssues": "Ошибки",
+    "filtersLabel": "Фильтры",
+    "moreLabel": "Ещё",
+    "backToAccounts": "К аккаунтам",
+    "fiveHourRemaining": "Остаток за 5 ч",
+    "weekRemaining": "За неделю",
+    "detailsAction": "Подробнее",
     "emptyTitle": "Пока нет аккаунтов",
     "emptyDescription": "Нажмите «Добавить аккаунт». После авторизации он появится автоматически.",
     "usageRefreshing": "Получение актуальных данных",

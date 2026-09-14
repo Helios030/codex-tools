@@ -3,7 +3,7 @@ type DebugFloatingToolProps = {
 };
 
 export function DebugFloatingTool({ onOpenUpdateDialog }: DebugFloatingToolProps) {
-  if (!import.meta.env.DEV) {
+  if (!import.meta.env.DEV || !new URLSearchParams(window.location.search).has("debug")) {
     return null;
   }
 

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Tools UI preview — simulated data</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      // Development-only fixture: every native command is intercepted; no real accounts or services are touched.
+      import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+      const params = new URLSearchParams(location.search);
+      const now = Math.floor(Date.now() / 1000);
+      const count = Number(params.get('count') ?? 2);
+      const accounts = Array.from({ length: count }, (_, i) => ({
+        id: `preview-${i}`, accountKey: `preview-${i}`, accountId: `preview-${i}`,
+        label: i === 0 ? '工作账号' : `备用账号 ${i}`, sourceKind: 'chatgpt',
+        email: i === 1 ? 'long.account.address.for.layout.testing@example.com' : `account-${i}@example.com`,
+        planType: i % 2 ? 'plus' : 'pro', subscriptionActiveUntil: now + 86400 * 30,
+        profileAuthReady: true, profileConfigReady: true, profileIntegrityError: null,
+        profileLastValidatedAt: now, profileLastValidationError: null,
+        addedAt: now, updatedAt: now, authRefreshBlocked: false, authRefreshError: null,
+        apiProxyEnabled: true, isCurrent: i === 0, usageError: null,
+        apiBaseUrl: null, modelName: null, balanceText: null,
+        usage: {
+          fetchedAt: now, planType: i % 2 ? 'plus' : 'pro',
+          fiveHour: { usedPercent: 27 + (i % 4) * 20, windowSeconds: 18000, resetAt: now + 3600 },
+          oneWeek: { usedPercent: 4 + (i % 4) * 10, windowSeconds: 604800, resetAt: now + 86400 },
+          credits: null, resetCredits: { availableCount: 0, credits: [] },
+        },
+      }));
+      const settings = {
+        launchAtStartup: false, trayUsageDisplayMode: 'oneWeekRemaining',
+        trayUsageTitleShowWindowLabels: false, macosTrayTextIconStyle: 'codexTools',
+        windowsTrayIconStyle: 'gradientNumberPlate', trayQuotaIconVisible: true,
+        macosTrayLogoRingShowPercentage: true, windowsTaskbarWidgetPlacement: 'left',
+        windowsQuotaOnboardingCompleted: true, macosQuotaOnboardingCompleted: true,
+        launchCodexAfterSwitch: false, smartSwitchIncludeApi: false, launchCodexAsAdmin: false,
+        codexLaunchPath: null, syncOpencodeOpenaiAuth: false, restartOpencodeDesktopOnSwitch: false,
+        restartEditorsOnSwitch: false, restartEditorTargets: [], autoStartApiProxy: false,
+        apiProxyPort: 8787, apiProxyLoadBalanceMode: 'average', apiProxySequentialFiveHourLimitPercent: 80,
+        apiProxyDisabledModels: [], autoAccountWarmupEnabled: false, autoAccountWarmupAccountIds: [],
+        codexAnalyticsWeeklyBudgetUsd: null, remoteServers: [], locale: params.get('locale') ?? 'zh-CN', skippedUpdateVersion: null,
+      };
+      const totals = { inputTokens: 10000, cachedInputTokens: 2000, outputTokens: 5000, reasoningOutputTokens: 0, totalTokens: 15000 };
+      const tokens = { updatedAt: now, sourcePathCount: 1, failedPathCount: 0, unresolvedForkCount: 0, unresolvedUsageEventCount: 0, eventCount: 1, last24h: totals, last3d: totals, last7d: totals, last30d: totals, latestSession: null };
+      const analytics = { ...tokens, total: totals, totalCostUsd: 2, localTotalCostUsd: 2, last7dCostUsd: 2, localLast7dCostUsd: 2, budgetPeriodCostUsd: 2, localBudgetPeriodCostUsd: 2, pricingSource: 'UI fixture', costSource: 'local_estimate', costSourceUpdatedAt: now, costSourceError: null, weeklyBudgetUsd: null, weeklyBudgetPercent: null, weeklyBudgetAlert: 'none', projects: [], sessions: [], heatmap: [], topPrompts: [] };
+      window.uiPreview = { commands: [], accounts };
+      const nativeInvoke = window.__TAURI_INTERNALS__?.invoke;
+      mockWindows('main');
+      mockIPC(async (cmd, args = {}) => {
+        window.uiPreview.commands.push({ cmd, id: args.id });
+        if (cmd.startsWith('plugin:window|')) return nativeInvoke ? nativeInvoke(cmd, args) : false;
+        if (cmd === 'list_accounts' || cmd === 'refresh_all_usage') return structuredClone(accounts);
+        if (cmd === 'get_app_settings') return { ...settings };
+        if (cmd === 'update_app_settings') { Object.assign(settings, args.patch); return { ...settings }; }
+        if (cmd === 'get_installed_editor_apps' || cmd === 'list_api_proxy_keys' || cmd === 'list_api_proxy_key_usage_logs') return [];
+        if (cmd.includes('supported_models')) return ['gpt-5.5'];
+        if (cmd === 'get_api_proxy_status') return { running: false, port: null, apiKey: null, baseUrl: null, lanBaseUrl: null, codexProxyBound: false, codexProxyRestoreAvailable: false, activeAccountKey: null, lastError: null };
+        if (cmd === 'get_api_proxy_usage_stats') return { updatedAt: now, totalCalls: 0, totalTokens: 0, series: [], keySeries: [] };
+        if (cmd === 'get_cloudflared_status') return { installed: false, running: false, binaryPath: null, publicUrl: null, tunnelMode: null, lastError: null };
+        if (cmd.includes('token_usage')) return tokens;
+        if (cmd.includes('cost_analytics')) return analytics;
+        if (cmd === 'switch_account_and_launch') {
+          await new Promise(resolve => setTimeout(resolve, 800));
+          if (params.has('fail-switch')) throw new Error('UI fixture: switch failed');
+          accounts.forEach(account => { account.isCurrent = account.id === args.id; });
+          return { accountId: args.id, launchedAppPath: null, usedFallbackCli: false, opencodeSynced: false, opencodeSyncError: null, opencodeDesktopRestarted: false, opencodeDesktopRestartError: null, restartedEditorApps: [], editorRestartError: null, providerSyncError: null };
+        }
+        if (cmd === 'update_account_label') { accounts.find(account => account.accountKey === args.accountKey).label = args.label; return args.label; }
+        if (cmd === 'update_account_api_proxy_enabled') { accounts.find(account => account.accountKey === args.accountKey).apiProxyEnabled = args.enabled; return args.enabled; }
+        if (cmd === 'prepare_oauth_login') return { authUrl: 'https://example.com/preview-only', redirectUri: 'http://localhost/preview-only' };
+        if (cmd === 'export_accounts') return null;
+        return null;
+      }, { shouldMockEvents: true });
+      await import('/src/main.tsx');
+    </script>
+  </body>
+</html>

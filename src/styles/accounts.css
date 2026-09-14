@@ -1,13 +1,40 @@
 .accountsWorkspace {
-  min-height: 0;
-  height: 100%;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(470px, 32vw, 500px);
-  gap: 16px;
-  overflow: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--line) 78%, var(--subtle) 22%) transparent;
+  position:relative;
+  height:100%;
+  min-height:0;
+  min-width:0;
+  overflow:hidden;
 }
+
+.accountListPanel, .accountDetailPanel { border: 0; border-radius: 0; box-shadow: none; }
+.accountDetailPanel[hidden] { display: none; }
+.isDetailOpen .accountListStack { visibility: hidden; }
+.accountIdentityCell { grid-column: 1 / -1; }
+.accountUsageFive { grid-column: 1; }
+.accountUsageWeek { grid-column: 2; }
+.accountRow .rowActions { grid-column: 1 / -1; justify-content: flex-end; width: 100%; }
+.accountDetailsButton { margin-right: auto; }
+.accountBackButton { justify-self: start; display: inline-flex; align-items: center; gap: 8px; }
+.detailProxyToggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.detailAddress { margin: 0; overflow-wrap: anywhere; color: var(--subtle); font-size: 13px; }
+.accountFilterDisclosure { grid-column: 1; grid-row: 2; }
+.accountExtras { grid-column: 2; grid-row: 2; }
+.accountFilterDisclosure[open], .accountExtras[open] { grid-column: 1 / -1; grid-row: auto; }
+.accountFilterDisclosure > summary, .accountExtras > summary {
+  display: flex; align-items: center; min-height: 36px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 6px; cursor: pointer; color: var(--subtle); font-size: 13px;
+}
+.accountFilterDisclosure > summary::before, .accountExtras > summary::before { content: '+'; margin-right: 6px; }
+.accountFilterDisclosure[open] > summary::before, .accountExtras[open] > summary::before { content: '−'; }
+.accountToolbarActions .importBar { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.accountToolbarActions .importSmartSwitch, .accountToolbarActions .importPrimary { min-width: 0; min-height: 36px; padding: 0 8px; font-size: 12px; }
+.accountExtras .accountTokenUsageStrip { display: flex; flex-wrap: wrap; padding: 10px 0; border: 0; gap: 8px; background: transparent; }
+.usageMeterHead { font-size: 12px; }
+.accountRow .usageMeterHead > strong { font-weight: 600; }
+.detailCard h3, .detailSectionTitle h3 { font-weight: 600; font-size: 13px; }
+.quickActionGrid > button { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; min-height: 36px; padding: 6px 10px; }
+.metaWarning { color: var(--warning); }
+.metaError { color: var(--danger); }
 
 .accountsWorkspace::-webkit-scrollbar {
   width: 8px;
@@ -27,11 +54,11 @@
 }
 
 .accountListStack {
-  height: 100%;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
-  overflow: hidden;
+  height:100%;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
 }
 
 .accountListLeading {
@@ -40,40 +67,41 @@
 
 .accountListPanel,
 .accountDetailPanel {
-  border: 1px solid var(--section-line);
-  border-radius: 16px;
-  background: var(--section-card-surface);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .accountListPanel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
+  min-height:0;
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
 }
 
 .accountToolbar {
-  display: grid;
-  grid-template-columns: minmax(220px, 260px) auto minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--section-line);
-  background: color-mix(in srgb, var(--surface-tint) 72%, transparent);
+  display:grid;
+  grid-template-columns:auto auto minmax(0,1fr);
+  gap:12px;
+  align-items:start;
+  padding:0 0 14px;
+  border-bottom:1px solid var(--line);
+  background:transparent;
 }
 
 .accountSearch {
-  min-width: 0;
-  height: 40px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0 14px;
-  background: var(--bg-0);
-  box-shadow: inset 0 1px var(--surface-highlight-strong);
+  grid-column:1 / -1;
+  min-width:0;
+  height:36px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:0 10px;
+  background:var(--bg-0);
 }
 
 .searchIcon {
@@ -102,30 +130,29 @@
 }
 
 .accountFilters {
-  display: flex;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: 8px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:8px 0 0;
 }
 
 .accountFilters select {
-  height: 40px;
-  min-width: 104px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0 34px 0 14px;
-  color: color-mix(in srgb, var(--ink) 78%, var(--subtle) 22%);
-  background:
-    linear-gradient(45deg, transparent 50%, var(--subtle) 50%) right 15px center / 6px 6px no-repeat,
-    linear-gradient(135deg, var(--subtle) 50%, transparent 50%) right 10px center / 6px 6px no-repeat,
-    var(--bg-0);
-  box-shadow: inset 0 1px var(--surface-highlight-strong);
-  font: 700 0.82rem/1 var(--font-ui);
-  appearance: none;
+  min-width:0;
+  flex:1 1 140px;
+  height:36px;
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:0 8px;
+  background:var(--bg-0);
+  color:var(--ink);
+  font:500 13px/1.3 var(--font-ui);
 }
 
 .accountToolbarActions {
-  min-width: 0;
+  grid-column:3;
+  grid-row:2;
+  min-width:0;
+  justify-self:end;
 }
 
 .accountToolbarActions .importBar {
@@ -143,11 +170,11 @@
 }
 
 .accountListFrame {
-  --account-row-columns: minmax(260px, 1.5fr) minmax(108px, 0.66fr) minmax(108px, 0.66fr) minmax(96px, 0.56fr) 50px minmax(106px, auto);
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  overflow: hidden;
+  flex:1;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
 }
 
 .accountTokenUsageStrip {
@@ -230,14 +257,14 @@ button.accountTokenExportButton {
 }
 
 .accountRows {
-  min-height: 0;
-  padding: 8px 12px 12px;
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--line) 80%, var(--subtle) 20%) transparent;
+  flex:1;
+  min-height:0;
+  padding:12px 2px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  overflow:auto;
+  scrollbar-width:thin;
 }
 
 .accountRows::-webkit-scrollbar {
@@ -250,18 +277,7 @@ button.accountTokenExportButton {
 }
 
 .accountListHeader {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: none;
-  grid-template-columns: var(--account-row-columns);
-  gap: 8px;
-  align-items: center;
-  padding: 8px 20px 6px;
-  color: var(--subtle);
-  background: var(--section-card-surface);
-  font: 750 0.66rem/1 var(--font-ui);
-  white-space: nowrap;
+  display:none;
 }
 
 .accountListHeader span:nth-child(5) {
@@ -273,30 +289,26 @@ button.accountTokenExportButton {
 }
 
 .accountRow {
-  position: relative;
-  min-width: 0;
-  min-height: 76px;
-  display: grid;
-  grid-template-columns: var(--account-row-columns);
-  gap: 8px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 7px 10px 7px 12px;
-  background: var(--card);
-  cursor: pointer;
-  outline: none;
-  animation: riseIn 200ms ease both;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease;
+  position:relative;
+  flex:0 0 auto;
+  min-width:0;
+  min-height:0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:10px 16px;
+  align-items:center;
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:14px;
+  background:var(--card);
+  cursor:pointer;
+  animation:none;
 }
 
 .accountRow:hover {
-  border-color: color-mix(in srgb, var(--line) 78%, var(--brand) 22%);
-  background: color-mix(in srgb, var(--card) 94%, var(--surface-tint) 6%);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.04);
+  background:var(--surface-hover-bg);
+  box-shadow:none;
+  transform:none;
 }
 
 .accountRow:focus-visible {
@@ -307,11 +319,9 @@ button.accountTokenExportButton {
 }
 
 .accountRow.isSelected {
-  border-color: color-mix(in srgb, var(--brand) 68%, var(--line) 32%);
-  background: color-mix(in srgb, var(--card) 90%, var(--brand-soft) 10%);
-  box-shadow:
-    inset 2px 0 0 var(--brand),
-    0 8px 18px rgba(37, 99, 235, 0.06);
+  border-color:var(--line);
+  background:var(--card);
+  box-shadow:none;
 }
 
 .accountRow.isMenuOpen {
@@ -327,8 +337,8 @@ button.accountTokenExportButton {
 }
 
 .accountAvatar {
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -336,7 +346,7 @@ button.accountTokenExportButton {
   flex: 0 0 auto;
   color: #1d4ed8;
   background: #dbeafe;
-  font: 800 1rem/1 var(--font-ui);
+  font: 600 13px/1 var(--font-ui);
 }
 
 .accountAvatar.tone-team {
@@ -396,9 +406,9 @@ button.accountTokenExportButton {
 }
 
 .detailAvatar {
-  width: 54px;
-  height: 54px;
-  font-size: 1.08rem;
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
 }
 
 .accountIdentityText {
@@ -426,7 +436,7 @@ button.accountTokenExportButton {
   background: transparent;
   box-shadow: none;
   color: var(--ink);
-  font: 800 0.9rem/1.15 var(--font-ui);
+  font: 600 14px/1.3 var(--font-ui);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -877,20 +887,25 @@ button.accountTokenExportButton {
 }
 
 .accountDetailPanel {
-  padding: 16px;
-  display: grid;
-  grid-auto-rows: max-content;
-  align-content: start;
-  gap: 20px;
-  overflow: auto;
+  position:absolute;
+  inset:0;
+  min-width:0;
+  min-height:0;
+  padding:0 4px 12px;
+  display:grid;
+  grid-auto-rows:max-content;
+  align-content:start;
+  gap:16px;
+  overflow:auto;
+  background:var(--body-bg);
 }
 
 .detailHeader {
-  min-height: 84px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  min-height:0;
 }
 
 .detailIdentity {
@@ -909,13 +924,11 @@ button.accountTokenExportButton {
 }
 
 .detailTitleBlock h2 {
-  max-width: 220px;
-  margin: 0;
-  color: var(--ink);
-  font: 850 0.96rem/1.25 var(--font-ui);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width:none;
+  margin:0;
+  color:var(--ink);
+  font:600 15px/1.4 var(--font-ui);
+  overflow-wrap:anywhere;
 }
 
 .detailEditButton {
@@ -966,9 +979,14 @@ button.accountTokenExportButton {
 }
 
 .detailCard {
-  display: grid;
-  gap: 16px;
-  padding: 16px;
+  display:grid;
+  gap:12px;
+  padding:12px 0;
+  border:0;
+  border-top:1px solid var(--line);
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
 }
 
 .detailCard h3,
@@ -987,17 +1005,20 @@ button.accountTokenExportButton {
 }
 
 .detailMetaGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  overflow: visible;
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
 }
 
 .detailMetaGrid div {
-  min-width: 0;
-  min-height: 64px;
-  display: grid;
-  gap: 5px;
-  padding: 12px 14px;
+  min-width:0;
+  min-height:0;
+  display:grid;
+  gap:6px;
+  padding:8px 0;
 }
 
 .detailMetaGrid div:nth-child(odd) {
@@ -1009,7 +1030,7 @@ button.accountTokenExportButton {
 }
 
 .recentSwitchCard {
-  min-height: 168px;
+  min-height:0;
 }
 
 .detailMetaGrid span {
@@ -1250,22 +1271,21 @@ button.accountTokenExportButton {
 }
 
 .quickActionGrid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
 }
 
 .quickActionGrid button {
   min-width: 0;
-  min-height: 64px;
-  border-radius: 12px;
-  padding: 9px 7px;
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: 7px;
+  min-height: 36px;
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--subtle);
-  font: 750 0.68rem/1.15 var(--font-ui);
+  font: 500 13px/1.3 var(--font-ui);
   text-align: center;
 }
 

@@ -181,6 +181,14 @@
     "deleting": "正在删除"
   },
   "accountsGrid": {
+    "compactExhausted": "耗尽",
+    "compactIssues": "异常",
+    "filtersLabel": "筛选",
+    "moreLabel": "更多",
+    "backToAccounts": "返回账号",
+    "fiveHourRemaining": "5小时剩余",
+    "weekRemaining": "本周剩余",
+    "detailsAction": "详情",
     "emptyTitle": "还没有账号",
     "emptyDescription": "点击“添加账号”，完成授权后会自动出现在列表中。",
     "usageRefreshing": "正在获取最新用量",

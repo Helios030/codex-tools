@@ -1292,9 +1292,10 @@ export function useCodexController(
   useEffect(() => {
     let disposed = false;
     let unlistenResized: UnlistenFn | null = null;
-    const currentWindow = getCurrentWindow();
+    const currentWindow = "__TAURI_INTERNALS__" in window ? getCurrentWindow() : null;
 
     const syncMinimized = async () => {
+      if (!currentWindow) return;
       try {
         const minimized = await currentWindow.isMinimized();
         if (!disposed) {
@@ -1309,8 +1310,7 @@ export function useCodexController(
     };
 
     document.addEventListener("visibilitychange", syncDocumentVisibility);
-    void currentWindow
-      .onResized(() => {
+    void currentWindow?.onResized(() => {
         void syncMinimized();
       })
       .then((unlisten) => {

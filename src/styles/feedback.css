@@ -8,24 +8,23 @@
   padding: 10px 13px;
   font: 500 0.84rem/1.35 var(--font-ui);
   border: 1px solid transparent;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: var(--panel-bg);
   box-shadow: 0 12px 24px rgba(18, 36, 62, 0.18);
   animation: riseIn 180ms ease both;
 }
 
 .notice.ok {
-  background: rgba(56, 212, 159, 0.12);
+  background: var(--panel-bg);
   border-color: rgba(56, 212, 159, 0.42);
 }
 
 .notice.error {
-  background: rgba(242, 106, 119, 0.12);
+  background: var(--panel-bg);
   border-color: rgba(242, 106, 119, 0.45);
 }
 
 .notice.info {
-  background: rgba(47, 210, 200, 0.12);
+  background: var(--panel-bg);
   border-color: rgba(47, 210, 200, 0.42);
 }
 

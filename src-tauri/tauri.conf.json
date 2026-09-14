@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Codex Tools",
-        "width": 980,
-        "height": 760,
+        "width": 560,
+        "height": 720,
         "minWidth": 420,
         "minHeight": 560,
         "resizable": true,

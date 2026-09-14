@@ -5,11 +5,11 @@ const THEME_STORAGE_KEY = "codex-tools-theme";
 
 function readInitialTheme(): ThemeMode {
   if (typeof window === "undefined") {
-    return "light";
+    return "dark";
   }
 
   const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return saved === "dark" || saved === "light" ? saved : "light";
+  return saved === "dark" || saved === "light" ? saved : "dark";
 }
 
 export function useThemeMode() {

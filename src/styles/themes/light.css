@@ -3,12 +3,12 @@
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
   --font-mono:
     "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  --ink: #0f172a;
-  --subtle: #64748b;
-  --muted: #94a3b8;
+  --ink: #20242B;
+  --subtle: #616975;
+  --muted: #737B86;
   --bg-0: #ffffff;
-  --bg-1: #f8fafc;
-  --bg-2: #eef2f7;
+  --bg-1: #F6F7F9;
+  --bg-2: #ECEEF2;
   --line: rgba(15, 23, 42, 0.12);
   --line-strong: rgba(15, 23, 42, 0.18);
   --brand: #2563eb;
@@ -28,9 +28,9 @@
   --ambient-line: rgba(15, 23, 42, 0.04);
   --meta-bg: #ffffff;
   --import-bg: #ffffff;
-  --button-primary-bg: linear-gradient(180deg, #3b82f6, #2563eb);
+  --button-primary-bg: #245BDD;
   --button-primary-border: rgba(37, 99, 235, 0.58);
-  --button-ghost-bg: #ffffff;
+  --button-ghost-bg: #FFFFFF;
   --button-ghost-border: rgba(37, 99, 235, 0.2);
   --button-danger-bg: rgba(239, 68, 68, 0.08);
   --button-danger-border: rgba(239, 68, 68, 0.22);
@@ -40,7 +40,7 @@
   --surface-highlight-soft: rgba(255, 255, 255, 0.58);
   --surface-highlight-faint: rgba(255, 255, 255, 0.32);
   --surface-overlay: rgba(248, 250, 252, 0.82);
-  --surface-hover-bg: #f8fafc;
+  --surface-hover-bg: #F6F7F9;
   --surface-selected-bg: rgba(37, 99, 235, 0.08);
   --surface-switch-track: #cbd5e1;
   --surface-switch-track-active: #3b82f6;
@@ -49,12 +49,12 @@
   --shell-glow-a: transparent;
   --shell-glow-b: transparent;
   --shell-glow-c: transparent;
-  --tab-surface: #ffffff;
+  --tab-surface: #FFFFFF;
   --tab-active-surface: #f8fafc;
-  --feature-card-surface: #ffffff;
-  --section-card-surface: #ffffff;
-  --section-card-primary-surface: #ffffff;
-  --button-bg: #ffffff;
+  --feature-card-surface: #FFFFFF;
+  --section-card-surface: #FFFFFF;
+  --section-card-primary-surface: #FFFFFF;
+  --button-bg: #FFFFFF;
   --button-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     inset 0 1px rgba(255, 255, 255, 0.9);
@@ -64,7 +64,7 @@
   --button-disabled-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
     inset 0 1px rgba(255, 255, 255, 0.64);
-  --task-toast-surface: #ffffff;
+  --task-toast-surface: #FFFFFF;
   --dock-surface: #ffffff;
   --dock-active-surface: #eff6ff;
   --mode-card-active-surface: #eff6ff;
@@ -104,13 +104,13 @@
   --glow-hot: transparent;
   --glow-cool: transparent;
   --glow-neutral: transparent;
-  --body-bg: #f6f8fb;
+  --body-bg: #F6F7F9;
   --shell-top: #ffffff;
   --shell-mid: #f8fafc;
   --shell-bottom: #eef2f7;
-  --stage-glass: rgba(255, 255, 255, 0.78);
+  --stage-glass: #F6F7F9;
   --stage-line: rgba(15, 23, 42, 0.08);
-  --section-surface: #ffffff;
+  --section-surface: #FFFFFF;
   --section-line: rgba(15, 23, 42, 0.1);
   --section-shadow:
     0 16px 32px rgba(15, 23, 42, 0.06),

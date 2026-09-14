@@ -181,6 +181,14 @@
     "deleting": "削除中"
   },
   "accountsGrid": {
+    "compactExhausted": "残量なし",
+    "compactIssues": "要確認",
+    "filtersLabel": "絞り込み",
+    "moreLabel": "その他",
+    "backToAccounts": "アカウントに戻る",
+    "fiveHourRemaining": "5時間の残量",
+    "weekRemaining": "週間の残量",
+    "detailsAction": "詳細",
     "emptyTitle": "まだアカウントがありません",
     "emptyDescription": "「アカウント追加」をクリックすると、認証後に自動表示されます。",
     "usageRefreshing": "最新の使用量を取得中",

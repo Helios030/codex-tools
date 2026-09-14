@@ -172,13 +172,6 @@ function accountIssueReason(account: AccountSummary, fallbackReason: string): st
   );
 }
 
-function usedPercent(window: UsageWindow | null): number | null {
-  if (!window) {
-    return null;
-  }
-  return Math.max(0, Math.min(100, window.usedPercent));
-}
-
 function accountHasExhaustedWindow(account: AccountSummary): boolean {
   return [account.usage?.fiveHour ?? null, account.usage?.oneWeek ?? null].some((window) => {
     const remaining = remainingPercent(window);
@@ -350,18 +343,15 @@ function eventTimestampToUnixSeconds(timestamp: number): number {
 
 function UsageMeter({
   label,
-  windowLabel,
   window,
   text,
   className,
 }: {
   label: string;
-  windowLabel: "5h" | "1w";
   window: UsageWindow | null;
   text: UiCopy;
   className?: string;
 }) {
-  const value = usedPercent(window);
   const remaining = remainingPercent(window);
   const tone = remaining !== null && remaining <= 0 ? "danger" : remaining !== null && remaining < 15 ? "warning" : "normal";
 
@@ -369,17 +359,13 @@ function UsageMeter({
     <div className={`usageMeter tone-${tone}${className ? ` ${className}` : ""}`}>
       <div className="usageMeterHead">
         <span>{label}</span>
-        <strong>{percent(value)}</strong>
+        <strong>{percent(remaining)}</strong>
       </div>
       <div className="usageBar" aria-hidden="true">
-        <span style={{ width: toProgressWidth(value) }} />
-      </div>
-      <div className="usageMeterFoot">
-        <span>{text.remainingSuffix(percent(remaining))}</span>
-        <span>{windowLabel}</span>
+        <span style={{ width: toProgressWidth(remaining) }} />
       </div>
       <span className="visuallyHidden">
-        {label} {percent(value)} {text.remainingSuffix(percent(remaining))}
+        {label} {text.remainingSuffix(percent(remaining))}
       </span>
     </div>
   );
@@ -499,27 +485,6 @@ function TokenUsageStrip({
   );
 }
 
-function copyAccountText(value: string) {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    void navigator.clipboard.writeText(value);
-    return;
-  }
-
-  if (typeof document === "undefined") {
-    return;
-  }
-
-  const input = document.createElement("textarea");
-  input.value = value;
-  input.setAttribute("readonly", "true");
-  input.style.position = "fixed";
-  input.style.opacity = "0";
-  document.body.append(input);
-  input.select();
-  document.execCommand("copy");
-  input.remove();
-}
-
 function SearchIcon() {
   return (
     <svg className="searchIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -624,6 +589,9 @@ export function AccountsGrid({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [planFilter, setPlanFilter] = useState("all");
+  const [detailOpen, setDetailOpen] = useState(false);
+  const detailTriggerRef = useRef<HTMLElement | null>(null);
+  const backButtonRef = useRef<HTMLButtonElement | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [preferredVariantByGroup, setPreferredVariantByGroup] = useState<Record<string, string>>({});
   const [editingAliasId, setEditingAliasId] = useState<string | null>(null);
@@ -807,7 +775,19 @@ export function AccountsGrid({
     setAliasDraft("");
     setOpenMenuAccountId(null);
     setSelectedAccountId(accountId);
+    detailTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setDetailOpen(true);
   };
+
+  const closeDetail = () => {
+    setDetailOpen(false);
+    cancelAliasEdit();
+    requestAnimationFrame(() => detailTriggerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (detailOpen) backButtonRef.current?.focus();
+  }, [detailOpen]);
 
   const selectVariant = (groupId: string, account: AccountSummary) => {
     setPreferredVariantByGroup((current) => ({
@@ -876,8 +856,8 @@ export function AccountsGrid({
   };
 
   return (
-    <section className="accountsWorkspace" aria-busy={loading}>
-      <div className="accountListStack">
+    <section className={`accountsWorkspace${detailOpen ? " isDetailOpen" : ""}`} aria-busy={loading}>
+      <div className="accountListStack" inert={detailOpen}>
         {leadingContent ? <div className="accountListLeading">{leadingContent}</div> : null}
         <div className="accountListPanel">
           <div className="accountToolbar">
@@ -890,8 +870,11 @@ export function AccountsGrid({
                 aria-label={text.searchPlaceholder}
               />
             </label>
+            {toolbarActions ? <div className="accountToolbarActions">{toolbarActions}</div> : null}
+            <details className="accountFilterDisclosure">
+            <summary>{copy.accountsGrid.filtersLabel}</summary>
             <div className="accountFilters">
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as StatusFilter)}>
+              <select aria-label={text.allStatuses} value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as StatusFilter)}>
                 <option value="all">{text.allStatuses}</option>
                 <option value="using">{text.statusUsing}</option>
                 <option value="available">{text.statusAvailable}</option>
@@ -899,7 +882,7 @@ export function AccountsGrid({
                 <option value="exhausted">{text.statusExhausted}</option>
                 <option value="issue">{text.statusIssue}</option>
               </select>
-              <select value={planFilter} onChange={(event) => setPlanFilter(event.currentTarget.value)}>
+              <select aria-label={text.allPlans} value={planFilter} onChange={(event) => setPlanFilter(event.currentTarget.value)}>
                 <option value="all">{text.allPlans}</option>
                 <option value="pro">PRO</option>
                 <option value="plus">PLUS</option>
@@ -910,7 +893,13 @@ export function AccountsGrid({
                 <option value="free">FREE</option>
               </select>
             </div>
-            {toolbarActions ? <div className="accountToolbarActions">{toolbarActions}</div> : null}
+            </details>
+            <details className="accountExtras">
+              <summary>{copy.accountsGrid.moreLabel}</summary>
+              <TokenUsageStrip tokenUsage={tokenUsage} tokenUsageError={tokenUsageError}
+                locale={locale} text={text} accountCount={accounts.length}
+                exportingAccounts={exportingAccounts} onExportAll={onExportAll} />
+            </details>
           </div>
 
           {filteredRows.length === 0 && !loading ? (
@@ -920,15 +909,6 @@ export function AccountsGrid({
             </div>
           ) : (
             <div className="accountListFrame">
-              <TokenUsageStrip
-                tokenUsage={tokenUsage}
-                tokenUsageError={tokenUsageError}
-                locale={locale}
-                text={text}
-                accountCount={accounts.length}
-                exportingAccounts={exportingAccounts}
-                onExportAll={onExportAll}
-              />
               <div className="accountListHeader" aria-hidden="true">
                 <span>{copy.bottomDock.accounts}</span>
                 <span>{text.fiveHourUsage}</span>
@@ -956,14 +936,10 @@ export function AccountsGrid({
                   <article
                     key={row.id}
                     className={`accountRow status-${status}${isSelected ? " isSelected" : ""}${isMenuOpen ? " isMenuOpen" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectAccount(account.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        selectAccount(account.id);
-                      }
+                    onClick={(event) => {
+                      detailTriggerRef.current = event.currentTarget.querySelector<HTMLButtonElement>(".accountDetailsButton");
+                      setSelectedAccountId(account.id);
+                      setDetailOpen(true);
                     }}
                   >
                     <div className="accountIdentityCell">
@@ -1002,7 +978,7 @@ export function AccountsGrid({
                             title={accountAddress}
                             onClick={(event) => {
                               event.stopPropagation();
-                              copyAccountText(accountAddress);
+                              selectAccount(account.id);
                             }}
                           >
                             {accountAddress}
@@ -1032,44 +1008,31 @@ export function AccountsGrid({
                     </div>
                     <UsageMeter
                       className="accountUsageFive"
-                      label={text.fiveHourUsage}
-                      windowLabel="5h"
+                      label={copy.accountsGrid.fiveHourRemaining}
                       window={account.usage?.fiveHour ?? null}
                       text={text}
                     />
                     <UsageMeter
                       className="accountUsageWeek"
-                      label={text.weekUsage}
-                      windowLabel="1w"
+                      label={copy.accountsGrid.weekRemaining}
                       window={account.usage?.oneWeek ?? null}
                       text={text}
                     />
-                    <div className="resetCell">
-                      <span>{formatResetValue(account.usage?.fiveHour?.resetAt, locale, text.emptyValue)}</span>
-                      <strong>{formatResetValue(account.usage?.oneWeek?.resetAt, locale, text.emptyValue)}</strong>
-                    </div>
-                    <label className="rowToggle" onClick={(event) => event.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={account.apiProxyEnabled}
-                        onChange={(event) => {
-                          void onToggleApiProxy(account, event.currentTarget.checked);
-                        }}
-                        aria-label={copy.accountCard.apiProxyToggle}
-                      />
-                      <span />
-                    </label>
                     <div className="rowActions">
+                      <button type="button" className="accountDetailsButton"
+                        onClick={(event) => { event.stopPropagation(); selectAccount(account.id); }}>
+                        {copy.accountsGrid.detailsAction}
+                      </button>
                       <button
                         type="button"
                         className="rowSwitchButton"
-                        disabled={switchDisabled}
+                        disabled={switchDisabled || account.isCurrent}
                         onClick={(event) => {
                           event.stopPropagation();
                           void handleSwitch(account, event.timeStamp);
                         }}
                       >
-                        {isSwitching ? copy.accountCard.launching : text.switchAccount}
+                        {isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : text.switchAccount}
                       </button>
                       <button
                         type="button"
@@ -1163,7 +1126,15 @@ export function AccountsGrid({
         </div>
       </div>
 
-      <aside className="accountDetailPanel" aria-label={text.detailsTitle}>
+      <aside className="accountDetailPanel" hidden={!detailOpen} aria-label={text.detailsTitle}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !editingAliasId && !event.defaultPrevented) {
+            event.stopPropagation(); closeDetail();
+          }
+        }}>
+        <button ref={backButtonRef} type="button" className="accountBackButton" onClick={closeDetail}>
+          <span aria-hidden="true">←</span> {copy.accountsGrid.backToAccounts}
+        </button>
         {selectedRow ? (
           <>
             <header className="detailHeader">
@@ -1248,18 +1219,29 @@ export function AccountsGrid({
                 />
               </div>
               <UsageMeter
-                label={text.fiveHourUsage}
-                windowLabel="5h"
+                label={copy.accountsGrid.fiveHourRemaining}
                 window={selectedRow.account.usage?.fiveHour ?? null}
                 text={text}
               />
               <UsageMeter
-                label={text.weekUsage}
-                windowLabel="1w"
+                label={copy.accountsGrid.weekRemaining}
                 window={selectedRow.account.usage?.oneWeek ?? null}
                 text={text}
               />
             </section>
+
+            <section className="detailMetaGrid">
+              <div><span>{text.fiveHourUsage} · {text.resetTime}</span>
+                <strong>{formatResetValue(selectedRow.account.usage?.fiveHour?.resetAt, locale, text.emptyValue)}</strong></div>
+              <div><span>{text.weekUsage} · {text.resetTime}</span>
+                <strong>{formatResetValue(selectedRow.account.usage?.oneWeek?.resetAt, locale, text.emptyValue)}</strong></div>
+            </section>
+            <label className="detailProxyToggle">
+              <span>{copy.accountCard.apiProxyToggle}</span>
+              <input type="checkbox" checked={selectedRow.account.apiProxyEnabled}
+                onChange={(event) => void onToggleApiProxy(selectedRow.account, event.currentTarget.checked)} />
+            </label>
+            <p className="detailAddress">{displayAccountAddress(selectedRow.account, text.emptyValue)}</p>
 
             <section className="detailMetaGrid">
               <MembershipExpiry
@@ -1288,10 +1270,8 @@ export function AccountsGrid({
               onToggle={() => toggleResetCredits(selectedRow.account.id)}
             />
 
-            <section className="detailCard recentSwitchCard">
-              <div className="detailSectionTitle">
-                <h3>{text.recentSwitches}</h3>
-              </div>
+            {switchRecords.length > 0 ? <details className="detailCard recentSwitchCard">
+              <summary>{text.recentSwitches}</summary>
               {switchRecords.length > 0 ? (
                 <ul className="recentSwitchList">
                   {switchRecords.map((record) => (
@@ -1306,7 +1286,7 @@ export function AccountsGrid({
               ) : (
                 <p className="recentSwitchEmpty">{text.noSwitchRecords}</p>
               )}
-            </section>
+            </details> : null}
 
             <section className="detailCard quickActionCard">
               <h3>{text.quickActions}</h3>
@@ -1332,10 +1312,10 @@ export function AccountsGrid({
                   onClick={(event) => {
                     void handleSwitch(selectedRow.account, event.timeStamp);
                   }}
-                  disabled={authBusy}
+                  disabled={authBusy || selectedRow.account.isCurrent}
                 >
                   <ActionIcon type="switch" />
-                  <span>{text.switchAccount}</span>
+                  <span>{switchingId === selectedRow.account.id ? copy.accountCard.launching : selectedRow.account.isCurrent ? text.statusUsing : text.switchAccount}</span>
                 </button>
                 <button
                   type="button"

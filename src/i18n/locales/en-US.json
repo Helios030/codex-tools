@@ -181,6 +181,14 @@
     "deleting": "Deleting"
   },
   "accountsGrid": {
+    "compactExhausted": "Exhausted",
+    "compactIssues": "Issues",
+    "filtersLabel": "Filters",
+    "moreLabel": "More",
+    "backToAccounts": "Back to accounts",
+    "fiveHourRemaining": "5h remaining",
+    "weekRemaining": "Weekly remaining",
+    "detailsAction": "Details",
     "emptyTitle": "No accounts yet",
     "emptyDescription": "Click “Add account”. It appears automatically after authorization.",
     "usageRefreshing": "Fetching latest usage",

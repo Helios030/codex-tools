@@ -357,32 +357,6 @@ export function SettingsPanel({
                   </button>
                 ) : null}
               </div>
-              <label
-                className="themeSwitch trayUsageTitleSwitch"
-                aria-label={copy.settings.trayUsageTitleWindowLabels.label}
-                title={
-                  settings.trayUsageTitleShowWindowLabels
-                    ? copy.settings.trayUsageTitleWindowLabels.checkedText
-                    : copy.settings.trayUsageTitleWindowLabels.uncheckedText
-                }
-              >
-                <span className="trayUsageTitleSwitchLabel">
-                  {copy.settings.trayUsageTitleWindowLabels.label}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={settings.trayUsageTitleShowWindowLabels}
-                  disabled={savingSettings}
-                  onChange={(event) =>
-                    onUpdateSettings({
-                      trayUsageTitleShowWindowLabels: event.target.checked,
-                    })
-                  }
-                />
-                <span className="themeSwitchTrack" aria-hidden="true">
-                  <span className="themeSwitchThumb" />
-                </span>
-              </label>
               </div>
             </div>
           ) : null}

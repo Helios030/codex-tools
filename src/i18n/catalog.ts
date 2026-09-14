@@ -216,6 +216,14 @@ export type MessageCatalog = {
     deleting: string;
   };
   accountsGrid: {
+    filtersLabel: string;
+    moreLabel: string;
+    backToAccounts: string;
+    fiveHourRemaining: string;
+    weekRemaining: string;
+    detailsAction: string;
+    compactExhausted: string;
+    compactIssues: string;
     emptyTitle: string;
     emptyDescription: string;
     usageRefreshing: string;

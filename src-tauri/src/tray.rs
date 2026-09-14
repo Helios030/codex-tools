@@ -126,7 +126,7 @@ fn read_tray_title_config(app: &AppHandle) -> (TrayUsageDisplayMode, bool) {
         .map(|store| {
             (
                 store.settings.tray_usage_display_mode,
-                store.settings.tray_usage_title_show_window_labels,
+                false,
             )
         })
         .unwrap_or_default()
@@ -175,7 +175,7 @@ fn read_windows_usage_config(app: &AppHandle) -> WindowsUsageSurfaceConfig {
     load_store(app)
         .map(|store| WindowsUsageSurfaceConfig {
             mode: effective_windows_usage_display_mode(store.settings.tray_usage_display_mode),
-            show_window_labels: store.settings.tray_usage_title_show_window_labels,
+            show_window_labels: false,
             tray_icon_style: store.settings.windows_tray_icon_style,
             tray_quota_icon_visible: store.settings.tray_quota_icon_visible,
             widget_placement: store.settings.windows_taskbar_widget_placement,
@@ -475,9 +475,10 @@ fn build_tray_usage_title(
 #[cfg(target_os = "macos")]
 fn build_macos_onboarding_preview_title(
     mode: TrayUsageDisplayMode,
-    show_window_labels: bool,
+    _show_window_labels: bool,
     percent: f64,
 ) -> String {
+    let show_window_labels = false;
     if mode == TrayUsageDisplayMode::Hidden {
         return String::new();
     }

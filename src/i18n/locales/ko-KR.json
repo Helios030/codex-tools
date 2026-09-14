@@ -181,6 +181,14 @@
     "deleting": "삭제 중"
   },
   "accountsGrid": {
+    "compactExhausted": "소진",
+    "compactIssues": "문제",
+    "filtersLabel": "필터",
+    "moreLabel": "더 보기",
+    "backToAccounts": "계정으로 돌아가기",
+    "fiveHourRemaining": "5시간 잔여",
+    "weekRemaining": "주간 잔여",
+    "detailsAction": "상세",
     "emptyTitle": "아직 계정이 없습니다",
     "emptyDescription": "“계정 추가”를 클릭하면 인증 후 자동으로 표시됩니다.",
     "usageRefreshing": "최신 사용량 가져오는 중",

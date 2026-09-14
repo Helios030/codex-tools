@@ -13,7 +13,6 @@ type AppTopBarProps = {
   onToggleTheme: () => void;
   onRefresh: () => void;
   refreshing: boolean;
-  onGoHome: () => void;
   showRefresh: boolean;
 };
 
@@ -62,7 +61,6 @@ export function AppTopBar({
   onToggleTheme,
   onRefresh,
   refreshing,
-  onGoHome,
   showRefresh,
 }: AppTopBarProps) {
   const { copy } = useI18n();
@@ -90,15 +88,26 @@ export function AppTopBar({
 
   return (
     <header className="topbar">
-      <button type="button" className="brandLine homeLink" onClick={onGoHome}>
-        <img className="appLogo" src="/codex-tools.png" alt={copy.topBar.logoAlt} />
-        <h1>{copy.topBar.appTitle}</h1>
-      </button>
+      <div className="windowTitlebar">
       <div
         className="topDragRegion"
         aria-hidden="true"
         onMouseDown={handleStartWindowDrag}
       />
+      <div className="topActions">
+        <button className="iconButton" onClick={onToggleTheme} type="button"
+          title={copy.settings.theme.switchAriaLabel} aria-label={copy.settings.theme.switchAriaLabel}>
+          {themeMode === "dark" ? <SunIcon /> : <MoonIcon />}
+        </button>
+        {showRefresh ? (
+          <button className="iconButton" onClick={onRefresh} disabled={refreshing} type="button"
+            title={refreshing ? copy.topBar.refreshing : copy.topBar.manualRefresh}
+            aria-label={refreshing ? copy.topBar.refreshing : copy.topBar.manualRefresh}>
+            <RefreshIcon spinning={refreshing} />
+          </button>
+        ) : null}
+      </div>
+      </div>
       <nav className="topSegmentedNav" aria-label={copy.bottomDock.ariaLabel}>
         {navItems.map((item) => (
           <button
@@ -112,28 +121,6 @@ export function AppTopBar({
           </button>
         ))}
       </nav>
-      <div className="topActions">
-        <button
-          className="iconButton"
-          onClick={onToggleTheme}
-          title={copy.settings.theme.switchAriaLabel}
-          aria-label={copy.settings.theme.switchAriaLabel}
-          type="button"
-        >
-          {themeMode === "dark" ? <SunIcon /> : <MoonIcon />}
-        </button>
-        {showRefresh ? (
-          <button
-            className="iconButton"
-            onClick={onRefresh}
-            disabled={refreshing}
-            title={refreshing ? copy.topBar.refreshing : copy.topBar.manualRefresh}
-            aria-label={refreshing ? copy.topBar.refreshing : copy.topBar.manualRefresh}
-          >
-            <RefreshIcon spinning={refreshing} />
-          </button>
-        ) : null}
-      </div>
     </header>
   );
 }

@@ -1,10 +1,10 @@
 :root[data-theme="dark"] {
-  --ink: #e5edf7;
-  --subtle: #94a3b8;
-  --muted: #64748b;
-  --bg-0: #0b1120;
-  --bg-1: #111827;
-  --bg-2: #1e293b;
+  --ink: #F2F3F5;
+  --subtle: #A5ABB5;
+  --muted: #8A929E;
+  --bg-0: #191B1F;
+  --bg-1: #1B1D21;
+  --bg-2: #292D33;
   --line: rgba(226, 232, 240, 0.12);
   --line-strong: rgba(226, 232, 240, 0.2);
   --brand: #60a5fa;
@@ -16,27 +16,27 @@
   --warning: #fbbf24;
   --danger: #fb7185;
   --info: #60a5fa;
-  --card: #111827;
-  --panel-bg: #0f172a;
+  --card: #1B1D21;
+  --panel-bg: #191B1F;
   --panel-shadow:
     0 20px 42px rgba(0, 0, 0, 0.32),
     inset 0 1px rgba(255, 255, 255, 0.06);
   --ambient-line: rgba(226, 232, 240, 0.05);
   --meta-bg: #111827;
   --import-bg: #111827;
-  --button-primary-bg: linear-gradient(180deg, #60a5fa, #2563eb);
+  --button-primary-bg: #245BDD;
   --button-primary-border: rgba(96, 165, 250, 0.56);
-  --button-ghost-bg: #111827;
+  --button-ghost-bg: #1B1D21;
   --button-ghost-border: rgba(96, 165, 250, 0.24);
   --button-danger-bg: rgba(251, 113, 133, 0.12);
   --button-danger-border: rgba(251, 113, 133, 0.32);
-  --surface-tint: #172033;
+  --surface-tint: #23262B;
   --surface-highlight-strong: rgba(255, 255, 255, 0.14);
   --surface-highlight: rgba(255, 255, 255, 0.1);
   --surface-highlight-soft: rgba(255, 255, 255, 0.08);
   --surface-highlight-faint: rgba(255, 255, 255, 0.05);
   --surface-overlay: rgba(15, 23, 42, 0.86);
-  --surface-hover-bg: #172033;
+  --surface-hover-bg: #23262B;
   --surface-selected-bg: rgba(96, 165, 250, 0.14);
   --surface-switch-track: #334155;
   --surface-switch-track-active: #3b82f6;
@@ -45,12 +45,12 @@
   --shell-glow-a: transparent;
   --shell-glow-b: transparent;
   --shell-glow-c: transparent;
-  --tab-surface: #111827;
+  --tab-surface: #1B1D21;
   --tab-active-surface: #172033;
-  --feature-card-surface: #111827;
-  --section-card-surface: #111827;
-  --section-card-primary-surface: #111827;
-  --button-bg: #111827;
+  --feature-card-surface: #1B1D21;
+  --section-card-surface: #1B1D21;
+  --section-card-primary-surface: #1B1D21;
+  --button-bg: #1B1D21;
   --button-shadow:
     0 1px 2px rgba(0, 0, 0, 0.28),
     inset 0 1px rgba(255, 255, 255, 0.08);
@@ -60,7 +60,7 @@
   --button-disabled-shadow:
     0 1px 2px rgba(0, 0, 0, 0.24),
     inset 0 1px rgba(255, 255, 255, 0.06);
-  --task-toast-surface: #111827;
+  --task-toast-surface: #1B1D21;
   --dock-surface: #111827;
   --dock-active-surface: rgba(96, 165, 250, 0.14);
   --mode-card-active-surface: rgba(96, 165, 250, 0.14);
@@ -94,19 +94,19 @@
   --name-current: #93c5fd;
   --name-current-glow: rgba(96, 165, 250, 0.18);
   --usage-remain: #94a3b8;
-  --bar-track: #273449;
+  --bar-track: #343840;
   --credits: #93c5fd;
   --error-text: #fb7185;
   --glow-hot: transparent;
   --glow-cool: transparent;
   --glow-neutral: transparent;
-  --body-bg: #0b1120;
+  --body-bg: #141518;
   --shell-top: #0b1120;
   --shell-mid: #0f172a;
   --shell-bottom: #111827;
-  --stage-glass: rgba(15, 23, 42, 0.82);
+  --stage-glass: #141518;
   --stage-line: rgba(226, 232, 240, 0.08);
-  --section-surface: #111827;
+  --section-surface: #1B1D21;
   --section-line: rgba(226, 232, 240, 0.1);
   --section-shadow:
     0 20px 42px rgba(0, 0, 0, 0.28),
