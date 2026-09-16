@@ -1,13 +1,10 @@
 import {
   type ReactNode,
-  useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import type { AccountSummary, CodexTokenUsageSnapshot, UsageWindow } from "../types/app";
 import { useI18n } from "../i18n/I18nProvider";
 import { compareAccountsByRemaining } from "../utils/accountRanking";
@@ -42,16 +39,6 @@ type SwitchRecord = {
 
 type AccountStatus = "using" | "available" | "low" | "exhausted" | "issue";
 type StatusFilter = AccountStatus | "all";
-
-type RowActionMenuPosition = {
-  left: number;
-  top: number;
-};
-
-const ROW_ACTION_MENU_WIDTH = 138;
-const ROW_ACTION_MENU_ESTIMATED_HEIGHT = 164;
-const ROW_ACTION_MENU_GAP = 6;
-const ROW_ACTION_MENU_VIEWPORT_MARGIN = 8;
 
 type UiCopy = {
   searchPlaceholder: string;
@@ -497,15 +484,7 @@ function SearchIcon() {
   );
 }
 
-function MoreIcon() {
-  return (
-    <svg className="rowIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M12 6h.01" />
-      <path d="M12 12h.01" />
-      <path d="M12 18h.01" />
-    </svg>
-  );
-}
+
 
 function ActionIcon({ type }: { type: "login" | "warmup" | "export" | "delete" | "switch" | "edit" }) {
   if (type === "delete") {
@@ -579,7 +558,7 @@ export function AccountsGrid({
   switchingId,
   warmingAccountId,
   renamingAccountId,
-  pendingDeleteId,
+  pendingDeleteId: _pendingDeleteId,
   onExportAll,
   onExport,
   onReauthorize,
@@ -602,96 +581,8 @@ export function AccountsGrid({
   const [preferredVariantByGroup, setPreferredVariantByGroup] = useState<Record<string, string>>({});
   const [editingAliasId, setEditingAliasId] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
-  const [openMenuAccountId, setOpenMenuAccountId] = useState<string | null>(null);
-  const openMenuRootRef = useRef<HTMLDivElement | null>(null);
-  const openMenuButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [openMenuPosition, setOpenMenuPosition] = useState<RowActionMenuPosition | null>(null);
   const [switchRecords, setSwitchRecords] = useState<SwitchRecord[]>([]);
   const [expandedResetCreditsByAccount, setExpandedResetCreditsByAccount] = useState<Record<string, boolean>>({});
-
-  const positionOpenMenu = useCallback((menuHeight = ROW_ACTION_MENU_ESTIMATED_HEIGHT) => {
-    const trigger = openMenuButtonRef.current;
-    if (!trigger || typeof window === "undefined") {
-      return;
-    }
-
-    const triggerRect = trigger.getBoundingClientRect();
-    const maxLeft = Math.max(
-      ROW_ACTION_MENU_VIEWPORT_MARGIN,
-      window.innerWidth - ROW_ACTION_MENU_WIDTH - ROW_ACTION_MENU_VIEWPORT_MARGIN,
-    );
-    const preferredLeft = triggerRect.left - ROW_ACTION_MENU_WIDTH - ROW_ACTION_MENU_GAP;
-    const fallbackRight = triggerRect.right + ROW_ACTION_MENU_GAP;
-    const left = Math.min(
-      maxLeft,
-      preferredLeft >= ROW_ACTION_MENU_VIEWPORT_MARGIN ? preferredLeft : fallbackRight,
-    );
-    const maxTop = Math.max(
-      ROW_ACTION_MENU_VIEWPORT_MARGIN,
-      window.innerHeight - menuHeight - ROW_ACTION_MENU_VIEWPORT_MARGIN,
-    );
-    const centeredTop = triggerRect.top + (triggerRect.height - menuHeight) / 2;
-
-    // 菜单挂到 body 后不再受列表 overflow 裁切，同时在窗口边缘翻转并钳制到可视区域。
-    setOpenMenuPosition({
-      left: Math.max(ROW_ACTION_MENU_VIEWPORT_MARGIN, left),
-      top: Math.min(maxTop, Math.max(ROW_ACTION_MENU_VIEWPORT_MARGIN, centeredTop)),
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!openMenuAccountId) {
-      return;
-    }
-
-    positionOpenMenu(openMenuRootRef.current?.getBoundingClientRect().height);
-  }, [openMenuAccountId, positionOpenMenu]);
-
-  useEffect(() => {
-    if (!openMenuAccountId || typeof window === "undefined") {
-      return undefined;
-    }
-
-    const repositionOpenMenu = () => positionOpenMenu(openMenuRootRef.current?.getBoundingClientRect().height);
-    window.addEventListener("resize", repositionOpenMenu);
-    // capture=true 可以捕获 accountRows 自身的滚动，持续锚定到触发按钮。
-    window.addEventListener("scroll", repositionOpenMenu, true);
-    return () => {
-      window.removeEventListener("resize", repositionOpenMenu);
-      window.removeEventListener("scroll", repositionOpenMenu, true);
-    };
-  }, [openMenuAccountId, positionOpenMenu]);
-
-  useEffect(() => {
-    if (!openMenuAccountId || typeof document === "undefined") {
-      return undefined;
-    }
-
-    const closeOpenMenu = (event: PointerEvent) => {
-      const target = event.target;
-      if (
-        target instanceof Node &&
-        (openMenuRootRef.current?.contains(target) || openMenuButtonRef.current?.contains(target))
-      ) {
-        return;
-      }
-
-      setOpenMenuAccountId(null);
-    };
-    const closeOpenMenuOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpenMenuAccountId(null);
-        openMenuButtonRef.current?.focus();
-      }
-    };
-
-    document.addEventListener("pointerdown", closeOpenMenu, true);
-    document.addEventListener("keydown", closeOpenMenuOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOpenMenu, true);
-      document.removeEventListener("keydown", closeOpenMenuOnEscape);
-    };
-  }, [openMenuAccountId]);
 
   const groupedAccounts = useMemo<AccountGroup[]>(() => {
     const groups = new Map<string, AccountSummary[]>();
@@ -779,7 +670,6 @@ export function AccountsGrid({
   const selectAccount = (accountId: string) => {
     setEditingAliasId(null);
     setAliasDraft("");
-    setOpenMenuAccountId(null);
     setSelectedAccountId(accountId);
     detailTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setDetailOpen(true);
@@ -834,7 +724,6 @@ export function AccountsGrid({
     const sourceAccount = accounts.find((item) => item.isCurrent);
     const now = eventTimestampToUnixSeconds(eventTimestamp);
 
-    setOpenMenuAccountId(null);
     const didSwitch = await onSwitch(account);
     if (!didSwitch) {
       return;
@@ -930,20 +819,17 @@ export function AccountsGrid({
                 const normalizedPlan = account.planType || account.usage?.planType;
                 const isSelected = selectedRow?.account.id === account.id;
                 const isSwitching = switchingId === account.id;
-                const isWarming = warmingAccountId === account.id;
                 // 统一锁住切换入口，避免登录/导入/切换流程互相并发。
                 const switchDisabled = authBusy;
-                const isDeletePending = pendingDeleteId === account.id;
-                const isMenuOpen = openMenuAccountId === account.id;
                 const accountAddress = displayAccountAddress(account, text.emptyValue);
                 const issueReason = accountIssueReason(account, text.issueFallbackReason);
 
                 return (
                   <article
                     key={row.id}
-                    className={`accountRow status-${status}${dualArc ? " isDualArc" : ""}${isSelected ? " isSelected" : ""}${isMenuOpen ? " isMenuOpen" : ""}`}
+                    className={`accountRow status-${status}${dualArc ? " isDualArc" : ""}${isSelected ? " isSelected" : ""}`}
                     onClick={(event) => {
-                      detailTriggerRef.current = event.currentTarget.querySelector<HTMLButtonElement>(".accountDetailsButton");
+                      detailTriggerRef.current = event.currentTarget;
                       setSelectedAccountId(account.id);
                       setDetailOpen(true);
                     }}
@@ -1048,105 +934,21 @@ export function AccountsGrid({
                       text={text}
                     />
                     </>}
-                    <div className="rowActions">
-                      <button type="button" className="accountDetailsButton"
-                        onClick={(event) => { event.stopPropagation(); selectAccount(account.id); }}>
-                        {copy.accountsGrid.detailsAction}
-                      </button>
-                      {!dualArc ? <button
-                        type="button"
-                        className="rowSwitchButton"
-                        disabled={switchDisabled || account.isCurrent}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void handleSwitch(account, event.timeStamp);
-                        }}
-                      >
-                        {isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : text.switchAccount}
-                      </button> : null}
-                      <button
-                        type="button"
-                        className={`rowMoreButton${isDeletePending ? " isPending" : ""}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (isMenuOpen) {
-                            setOpenMenuAccountId(null);
-                            return;
-                          }
-
-                          openMenuButtonRef.current = event.currentTarget;
-                          positionOpenMenu();
-                          setOpenMenuAccountId(account.id);
-                        }}
-                        title={text.quickActions}
-                        aria-label={text.quickActions}
-                        aria-expanded={isMenuOpen}
-                      >
-                        <MoreIcon />
-                      </button>
-                      {isMenuOpen && openMenuPosition && typeof document !== "undefined"
-                        ? createPortal(
-                            <div
-                              ref={openMenuRootRef}
-                              className="rowActionMenu rowActionMenuPortal"
-                              style={openMenuPosition}
-                              role="menu"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenuAccountId(null);
-                                  onReauthorize(account);
-                                }}
-                              >
-                                <ActionIcon type="login" />
-                                {text.reauthorize}
-                              </button>
-                              {account.sourceKind !== "relay" ? (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  disabled={warmingAccountId !== null || authBusy}
-                                  onClick={() => {
-                                    setOpenMenuAccountId(null);
-                                    void onWarmup(account);
-                                  }}
-                                >
-                                  <ActionIcon type="warmup" />
-                                  {isWarming ? text.warming : text.warmup}
-                                </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                disabled={exportingAccounts}
-                                onClick={() => {
-                                  setOpenMenuAccountId(null);
-                                  onExport(account);
-                                }}
-                              >
-                                <ActionIcon type="export" />
-                                {text.exportAccount}
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="dangerMenuItem"
-                                onClick={() => {
-                                  setOpenMenuAccountId(null);
-                                  onDelete(account);
-                                }}
-                              >
-                                <ActionIcon type="delete" />
-                                {text.deleteAccount}
-                              </button>
-                            </div>,
-                            document.body,
-                          )
-                        : null}
-                    </div>
+                    {!dualArc ? (
+                      <div className="rowActions">
+                        <button
+                          type="button"
+                          className="rowSwitchButton"
+                          disabled={switchDisabled || account.isCurrent}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleSwitch(account, event.timeStamp);
+                          }}
+                        >
+                          {isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : text.switchAccount}
+                        </button>
+                      </div>
+                    ) : null}
                   </article>
                 );
                 })}

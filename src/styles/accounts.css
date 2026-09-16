@@ -9,11 +9,10 @@
 .accountListPanel, .accountDetailPanel { border: 0; border-radius: 0; box-shadow: none; }
 .accountDetailPanel[hidden] { display: none; }
 .isDetailOpen .accountListStack { visibility: hidden; }
-.accountIdentityCell { grid-column: 1 / -1; }
+.accountIdentityCell { grid-column: 1 / -1; padding-right: 32px; }
 .accountUsageFive { grid-column: 1; }
 .accountUsageWeek { grid-column: 2; }
-.accountRow .rowActions { grid-column: 1 / -1; justify-content: flex-end; width: 100%; }
-.accountDetailsButton { margin-right: auto; }
+.accountRow .rowActions { grid-column: 1 / -1; justify-content: flex-start; width: 100%; }
 .accountBackButton { justify-self: start; display: inline-flex; align-items: center; gap: 8px; }
 .detailProxyToggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
 .detailAddress { margin: 0; overflow-wrap: anywhere; color: var(--subtle); font-size: 13px; }
@@ -37,7 +36,7 @@
 .metaError { color: var(--danger); }
 
 .accountRow.isDualArc { grid-template-columns: minmax(0, 1fr) 126px; gap: 8px 12px; }
-.isDualArc .accountIdentityCell { grid-column: 1; grid-row: 1; display: block; }
+.isDualArc .accountIdentityCell { grid-column: 1; grid-row: 1; display: block; padding-right: 0; }
 .isDualArc .accountAvatar { display: none; }
 .isDualArc .accountIdentityText { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .isDualArc .accountTitleLine { display: contents; }
@@ -45,8 +44,7 @@
 .isDualArc .accountStateLine { flex: 1; min-width: 0; flex-wrap: wrap; overflow-wrap: anywhere; }
 .isDualArc > .quotaNumericWeek { grid-column: 1; grid-row: 2; }
 .isDualArc > .quotaNumericFive { grid-column: 1; grid-row: 3; }
-.isDualArc > .quotaArc { grid-column: 2; grid-row: 1 / 5; }
-.isDualArc .rowActions { grid-row: 4; }
+.isDualArc > .quotaArc { grid-column: 2; grid-row: 1 / 4; }
 .quotaNumeric { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--subtle); font-size: 12px; }
 .quotaNumeric::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--quota-color); }
 .quotaNumericWeek { --quota-color: var(--quota-week); }
@@ -853,8 +851,8 @@ button.accountTokenExportButton {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  justify-self: end;
+  justify-content: flex-start;
+  justify-self: start;
   gap: 6px;
 }
 
@@ -867,10 +865,28 @@ button.accountTokenExportButton {
 }
 
 .rowMoreButton {
-  width: 32px;
-  height: 32px;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--subtle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  transition: all 140ms ease;
+}
+
+.rowMoreButton:hover {
+  background: var(--surface-hover-bg);
+  border-color: var(--line);
+  color: var(--ink);
 }
 
 .rowMoreButton.isPending {
@@ -1058,28 +1074,21 @@ button.accountTokenExportButton {
 }
 
 .detailMetaGrid {
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  border:0;
-  border-radius:0;
-  background:transparent;
-  box-shadow:none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .detailMetaGrid div {
-  min-width:0;
-  min-height:0;
-  display:grid;
-  gap:6px;
-  padding:8px 0;
-}
-
-.detailMetaGrid div:nth-child(odd) {
-  border-right: 1px solid var(--line);
-}
-
-.detailMetaGrid div:nth-child(n + 3) {
-  border-top: 1px solid var(--line);
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 6px;
+  padding: 4px 0;
 }
 
 .recentSwitchCard {

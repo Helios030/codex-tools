@@ -77,9 +77,8 @@ export function AppTopBar({
 
     event.preventDefault();
     const appWindow = getCurrentWindow();
-    // Tauri 手动拖动契约使用 mousedown 的点击计数；双击不能再进入 startDragging。
+    // 顶部拖动区仅负责移动窗口，禁用双击最大化
     if (event.detail === 2) {
-      void appWindow.toggleMaximize().catch(() => {});
       return;
     }
 

@@ -176,105 +176,12 @@
   overflow-wrap: anywhere;
 }
 
-.analyticsPage {
-  padding: 18px;
-}
-
-.analyticsHeader,
-.analyticsBudget,
-.analyticsGrid,
-.analyticsStats {
-  grid-template-columns: 1fr;
-}
-
-.analyticsActions,
-.analyticsBudgetActions {
-  justify-content: stretch;
-}
-
-.analyticsActions > button,
-.analyticsBudgetActions > button {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.analyticsBlockSessions,
-.analyticsBlockPrompts {
-  grid-column: auto;
-}
-
-.analyticsBlockHead {
-  display: grid;
-}
-
-.analyticsSearch {
-  max-width: none;
-}
-
-.analyticsHeatmapHeader,
-.analyticsHeatmapRow {
-  grid-template-columns: 34px repeat(24, minmax(7px, 1fr));
-  gap: 3px;
-}
-
 .resetCreditItem {
   grid-template-columns: 28px minmax(0, 1fr);
 }
 
 .resetCreditItem div {
   grid-column: 2;
-}
-
-.proxySectionHeader,
-.cloudflaredToolbar,
-.cloudflaredInstallCard,
-.remoteServerCardHeader,
-.remoteDiagnosticsGrid,
-.remoteServerFileRow,
-.remoteAuthRow,
-.remoteIdentityRow {
-  grid-template-columns: 1fr;
-}
-
-.proxyHeaderStats,
-.proxySectionToggle,
-.proxyControlActions {
-  justify-content: flex-start;
-}
-
-.proxyControlRow {
-  grid-template-columns: 1fr;
-  align-items: start;
-}
-
-.proxyCompactField,
-.proxyPortInput {
-  width: 100%;
-}
-
-.proxyDetailGrid,
-.remoteServerGrid,
-.remoteProxyDetailGrid,
-.remoteServerStatus,
-.cloudflaredModeGrid,
-.cloudflaredFormGrid {
-  grid-template-columns: 1fr;
-}
-
-.proxyEndpointRow {
-  grid-template-columns: 1fr;
-}
-
-.remoteServerSummaryTrailing {
-  justify-content: flex-start;
-}
-
-.remoteServerActions {
-  justify-content: flex-start;
-}
-
-.proxyDetailCard {
-  min-height: 0;
 }
 
 .cards {

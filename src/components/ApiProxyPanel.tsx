@@ -1,18 +1,11 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-  type CSSProperties,
 } from "react";
-import { createPortal } from "react-dom";
 
 import { useI18n } from "../i18n/I18nProvider";
-import type { MessageCatalog } from "../i18n/catalog";
-import { EditorMultiSelect, type MultiSelectOption } from "./EditorMultiSelect";
 import type {
   ApiProxyStatus,
   ApiProxyKey,
@@ -20,6 +13,9 @@ import type {
   ApiProxyUsageMetric,
   ApiProxyUsageRange,
   ApiProxyUsageStats,
+  ApiProxyUsageSeries,
+  ApiProxyUsageKeySeries,
+  ApiProxyUsagePoint,
   CloudflaredStatus,
   CloudflaredTunnelMode,
   ApiProxyLoadBalanceMode,
@@ -35,7 +31,6 @@ const DEFAULT_PROXY_PORT = "8787";
 const DEFAULT_REMOTE_SSH_PORT = "22";
 const DEFAULT_REMOTE_LISTEN_PORT = "8787";
 const REMOTE_DRAFTS_CACHE_KEY = "codex-tools:proxy-remote-drafts";
-const REMOTE_EXPANDED_CACHE_KEY = "codex-tools:proxy-remote-expanded-id";
 const REMOTE_SELECTED_CACHE_KEY = "codex-tools:proxy-remote-selected-id";
 const REMOTE_HISTORY_CACHE_KEY = "codex-tools:proxy-remote-history";
 const API_PROXY_REASONING_OPTION_IDS = [
@@ -48,6 +43,7 @@ const API_PROXY_REASONING_OPTION_IDS = [
   "max",
 ] as const;
 const API_PROXY_SERVICE_TIER_OPTION_IDS = ["auto", "default", "fast", "flex"] as const;
+
 type RemoteServerDraft = {
   id: string;
   label: string;
@@ -133,24 +129,37 @@ type ApiProxyPanelProps = {
   onStopCloudflared: () => void;
 };
 
+type ApiProxyTab = "status" | "usage" | "keys" | "remote";
+
 function copyText(value: string | null) {
-  if (!value) {
-    return;
-  }
+  if (!value) return;
   void navigator.clipboard?.writeText(value).catch(() => {});
 }
 
-function ProxyHelpTip({ label, children }: { label: string; children: string }) {
-  return (
-    <span className="proxyHelpTip">
-      <button type="button" className="proxyHelpButton" aria-label={label} title={children}>
-        ?
-      </button>
-      <span className="proxyHelpBubble" role="tooltip">
-        {children}
-      </span>
-    </span>
-  );
+function formatNumber(value: number, locale: string) {
+  return new Intl.NumberFormat(locale, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatTokenCount(value: number, locale: string) {
+  const absoluteValue = Math.abs(value);
+  const scale =
+    absoluteValue >= 999_950
+      ? { divisor: 1_000_000, suffix: "M" }
+      : absoluteValue >= 1_000
+        ? { divisor: 1_000, suffix: "K" }
+        : null;
+
+  if (!scale) {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(value);
+  }
+
+  const formatted = new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 1,
+  }).format(value / scale.divisor);
+  return `${formatted}${scale.suffix}`;
 }
 
 function createRemoteServerId() {
@@ -179,16 +188,16 @@ function createRemoteDraft(): RemoteServerDraft {
 function configToDraft(server: RemoteServerConfig): RemoteServerDraft {
   return {
     id: server.id,
-    label: server.label,
+    label: server.label ?? "",
     host: server.host,
-    sshPort: String(server.sshPort),
+    sshPort: String(server.sshPort ?? 22),
     sshUser: server.sshUser,
     authMode: server.authMode,
     identityFile: server.identityFile ?? "",
     privateKey: server.privateKey ?? "",
     password: server.password ?? "",
-    remoteDir: server.remoteDir,
-    listenPort: String(server.listenPort),
+    remoteDir: server.remoteDir ?? "/opt/codex-tools",
+    listenPort: String(server.listenPort ?? 8787),
   };
 }
 
@@ -197,30 +206,19 @@ function draftToConfig(draft: RemoteServerDraft): RemoteServerConfig {
     id: draft.id,
     label: draft.label.trim(),
     host: draft.host.trim(),
-    sshPort: Number.parseInt(draft.sshPort, 10) || 0,
-    sshUser: draft.sshUser.trim(),
+    sshPort: Number.parseInt(draft.sshPort, 10) || 22,
+    sshUser: draft.sshUser.trim() || "root",
     authMode: draft.authMode,
     identityFile: draft.identityFile.trim() || null,
     privateKey: draft.privateKey.trim() || null,
-    password: draft.password.trim() || null,
-    remoteDir: draft.remoteDir.trim(),
-    listenPort: Number.parseInt(draft.listenPort, 10) || 0,
+    password: draft.password || null,
+    remoteDir: draft.remoteDir.trim() || "/opt/codex-tools",
+    listenPort: Number.parseInt(draft.listenPort, 10) || 8787,
   };
 }
 
-function buildRemoteBaseUrl(draft: RemoteServerDraft) {
-  const host = draft.host.trim();
-  const port = draft.listenPort.trim();
-  if (!host || !port) {
-    return "--";
-  }
-  return `http://${host}:${port}/v1`;
-}
-
 function readStorageValue(key: string, scope: "session" | "local" = "session") {
-  if (typeof window === "undefined") {
-    return null;
-  }
+  if (typeof window === "undefined") return null;
   try {
     return (scope === "local" ? window.localStorage : window.sessionStorage).getItem(key);
   } catch {
@@ -233,9 +231,7 @@ function writeStorageValue(
   value: string | null,
   scope: "session" | "local" = "session",
 ) {
-  if (typeof window === "undefined") {
-    return;
-  }
+  if (typeof window === "undefined") return;
   try {
     const storage = scope === "local" ? window.localStorage : window.sessionStorage;
     if (value === null) {
@@ -244,1541 +240,525 @@ function writeStorageValue(
       storage.setItem(key, value);
     }
   } catch {
-    // Ignore storage failures in constrained environments.
+    // Ignore storage quota errors
   }
 }
 
 function readCachedRemoteDrafts(remoteServers: RemoteServerConfig[]) {
   const cached = readStorageValue(REMOTE_DRAFTS_CACHE_KEY);
-  if (!cached) {
-    return remoteServers.map(configToDraft);
-  }
-
+  if (!cached) return remoteServers.map(configToDraft);
   try {
-    const parsed = JSON.parse(cached);
-    if (!Array.isArray(parsed)) {
-      return remoteServers.map(configToDraft);
-    }
-
-    return parsed
-      .map((item) => {
-        if (!item || typeof item !== "object") {
-          return null;
-        }
-
-        const raw = item as Partial<Record<keyof RemoteServerDraft, unknown>>;
-        const authMode =
-          raw.authMode === "keyContent" ||
-          raw.authMode === "keyFile" ||
-          raw.authMode === "keyPath" ||
-          raw.authMode === "password"
-            ? raw.authMode
-            : "keyPath";
-
-        return {
-          id: typeof raw.id === "string" && raw.id ? raw.id : createRemoteServerId(),
-          label: typeof raw.label === "string" ? raw.label : "",
-          host: typeof raw.host === "string" ? raw.host : "",
-          sshPort: typeof raw.sshPort === "string" ? raw.sshPort : DEFAULT_REMOTE_SSH_PORT,
-          sshUser: typeof raw.sshUser === "string" ? raw.sshUser : "root",
-          authMode,
-          identityFile: typeof raw.identityFile === "string" ? raw.identityFile : "",
-          privateKey: typeof raw.privateKey === "string" ? raw.privateKey : "",
-          password: typeof raw.password === "string" ? raw.password : "",
-          remoteDir: typeof raw.remoteDir === "string" ? raw.remoteDir : "/opt/codex-tools",
-          listenPort:
-            typeof raw.listenPort === "string" ? raw.listenPort : DEFAULT_REMOTE_LISTEN_PORT,
-        } satisfies RemoteServerDraft;
-      })
-      .filter((item): item is RemoteServerDraft => item !== null);
+    const parsed = JSON.parse(cached) as RemoteServerDraft[];
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
   } catch {
-    return remoteServers.map(configToDraft);
+    // Fall back to props
   }
-}
-
-function readCachedEditingRemoteId(remoteServers: RemoteServerConfig[]) {
-  const drafts = readCachedRemoteDrafts(remoteServers);
-  const cached = readStorageValue(REMOTE_EXPANDED_CACHE_KEY);
-  if (cached && drafts.some((draft) => draft.id === cached)) {
-    return cached;
-  }
-  return null;
+  return remoteServers.map(configToDraft);
 }
 
 function readCachedSelectedRemoteId(remoteServers: RemoteServerConfig[]) {
-  const drafts = readCachedRemoteDrafts(remoteServers);
   const cached = readStorageValue(REMOTE_SELECTED_CACHE_KEY, "local");
-  if (cached && drafts.some((draft) => draft.id === cached)) {
-    return cached;
-  }
-  return drafts[0]?.id ?? null;
+  return cached && remoteServers.some((s) => s.id === cached)
+    ? cached
+    : remoteServers[0]?.id ?? null;
 }
 
 function readCachedRemoteHistory(remoteServers: RemoteServerConfig[]) {
-  const activeIds = new Set(remoteServers.map((server) => server.id));
   const cached = readStorageValue(REMOTE_HISTORY_CACHE_KEY, "local");
-  if (!cached) {
-    return {} as Record<string, number>;
-  }
-
+  if (!cached) return {};
   try {
-    const parsed = JSON.parse(cached);
-    if (!parsed || typeof parsed !== "object") {
-      return {} as Record<string, number>;
+    const parsed = JSON.parse(cached) as Record<string, number>;
+    if (parsed && typeof parsed === "object") {
+      return Object.fromEntries(
+        Object.entries(parsed).filter(([id]) => remoteServers.some((s) => s.id === id)),
+      );
     }
-
-    const next: Record<string, number> = {};
-    for (const [id, value] of Object.entries(parsed)) {
-      if (activeIds.has(id) && typeof value === "number" && Number.isFinite(value) && value > 0) {
-        next[id] = value;
-      }
-    }
-    return next;
   } catch {
-    return {} as Record<string, number>;
+    // Ignore
   }
-}
-
-function isRemoteDraftConfigured(draft: RemoteServerDraft) {
-  const sshPort = Number.parseInt(draft.sshPort, 10);
-  const listenPort = Number.parseInt(draft.listenPort, 10);
-
-  if (
-    !draft.label.trim() ||
-    !draft.host.trim() ||
-    !draft.sshUser.trim() ||
-    !draft.remoteDir.trim() ||
-    !Number.isInteger(sshPort) ||
-    sshPort <= 0 ||
-    !Number.isInteger(listenPort) ||
-    listenPort <= 0
-  ) {
-    return false;
-  }
-
-  if (draft.authMode === "keyContent") {
-    return draft.privateKey.trim() !== "";
-  }
-  if (draft.authMode === "password") {
-    return draft.password.trim() !== "";
-  }
-  return draft.identityFile.trim() !== "";
+  return {};
 }
 
 function formatRemoteHistoryTime(locale: string, timestamp: number) {
-  try {
-    return new Intl.DateTimeFormat(locale, {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(timestamp);
-  } catch {
-    return new Date(timestamp).toLocaleString();
+  if (!timestamp) return "--";
+  const deltaSec = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (deltaSec < 60) return locale.startsWith("zh") ? "刚刚" : "just now";
+  if (deltaSec < 3600) {
+    const mins = Math.floor(deltaSec / 60);
+    return locale.startsWith("zh") ? `${mins} 分钟前` : `${mins}m ago`;
   }
+  if (deltaSec < 86400) {
+    const hrs = Math.floor(deltaSec / 3600);
+    return locale.startsWith("zh") ? `${hrs} 小时前` : `${hrs}h ago`;
+  }
+  const days = Math.floor(deltaSec / 86400);
+  return locale.startsWith("zh") ? `${days} 天前` : `${days}d ago`;
 }
 
 function formatApiProxyKeyLogTime(locale: string, timestamp: number | null) {
-  if (timestamp === null || timestamp <= 0) {
-    return "--";
-  }
-
-  // 后端统一返回 Unix 秒；Date/Intl 接收毫秒，必须在展示边界转换。
-  const timestampMs = timestamp * 1000;
-  try {
-    return new Intl.DateTimeFormat(locale, {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(timestampMs);
-  } catch {
-    return new Date(timestampMs).toLocaleString();
-  }
+  if (!timestamp) return "--";
+  return new Intl.DateTimeFormat(locale, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp * 1000));
 }
 
 function summarizeApiProxyKeyLogs(logs: ApiProxyKeyUsageLogEntry[], keyId: string) {
-  return logs.reduce(
-    (summary, log) => {
-      if (log.keyId !== keyId) {
-        return summary;
-      }
-
-      return {
-        calls: summary.calls + log.calls,
-        tokens: summary.tokens + log.tokens,
-        lastUsedAt:
-          summary.lastUsedAt === null || log.timestamp > summary.lastUsedAt
-            ? log.timestamp
-            : summary.lastUsedAt,
-      };
-    },
-    { calls: 0, tokens: 0, lastUsedAt: null as number | null },
-  );
+  const matched = logs.filter((log) => log.keyId === keyId);
+  const totalCalls = matched.reduce((sum, log) => sum + (log.calls ?? 1), 0);
+  const totalTokens = matched.reduce((sum, log) => sum + (log.tokens ?? 0), 0);
+  const lastLog = matched[0] ?? null;
+  return {
+    totalCalls,
+    totalTokens,
+    lastUsedAt: lastLog?.timestamp ?? null,
+  };
 }
 
 function toggleStringValue(values: string[], value: string, enabled: boolean) {
-  if (enabled) {
-    return values.includes(value) ? values : [...values, value];
-  }
-  return values.filter((item) => item !== value);
-}
-
-const REMOTE_AUTH_OPTIONS: MultiSelectOption<RemoteAuthMode>[] = [
-  { id: "keyContent", label: "keyContent" },
-  { id: "keyFile", label: "keyFile" },
-  { id: "keyPath", label: "keyPath" },
-  { id: "password", label: "password" },
-];
-
-type ApiProxyUsagePlotPoint = {
-  timestamp: number;
-  value: number;
-  x: number;
-  y: number;
-};
-
-type ApiProxyUsageCurveSegment = {
-  start: ApiProxyUsagePlotPoint;
-  end: ApiProxyUsagePlotPoint;
-  cp1x: number;
-  cp1y: number;
-  cp2x: number;
-  cp2y: number;
-};
-
-type ApiProxyUsageSeriesView = {
-  model: string;
-  color: string;
-  gradientId: string;
-  totalCalls: number;
-  totalTokens: number;
-  totalValue: number;
-  bucketPoints: ApiProxyUsagePlotPoint[];
-  points: ApiProxyUsagePlotPoint[];
-  curveSegments: ApiProxyUsageCurveSegment[];
-  linePath: string;
-  areaPath: string;
-};
-
-type ApiProxyUsageHoverState = {
-  cursorX: number;
-  cursorY: number;
-  tooltipX: number;
-  tooltipY: number;
-  bucketStartTimestamp: number;
-  bucketEndTimestamp: number;
-  bucketStartX: number;
-  bucketEndX: number;
-  timeLabel: string;
-  metricLabel: string;
-  entries: Array<{
-    model: string;
-    color: string;
-    value: number;
-    valueLabel: string;
-    pointX: number;
-    pointY: number;
-  }>;
-};
-
-type ApiProxyUsageContextMenu = {
-  x: number;
-  y: number;
-};
-
-type ApiProxyUsageChartMotion = {
-  id: number;
-  mode: "none" | "rise" | "slide";
-  offset: number;
-};
-
-type ApiProxyUsageDimension = "model" | "key";
-
-type ApiProxyUsageChartProps = {
-  copy: MessageCatalog["apiProxy"];
-  locale: string;
-  stats: ApiProxyUsageStats | null;
-  range: ApiProxyUsageRange;
-  metric: ApiProxyUsageMetric;
-  loading: boolean;
-  clearing: boolean;
-  exporting: boolean;
-  proxyRunning: boolean;
-  apiProxyKeys: ApiProxyKey[];
-  onSelectRange: (range: ApiProxyUsageRange) => void;
-  onSelectMetric: (metric: ApiProxyUsageMetric) => void;
-  onExport: (keyId: string | null) => Promise<void> | void;
-  onClear: () => void;
-};
-
-const API_PROXY_USAGE_PALETTE = [
-  "var(--proxy-usage-series-1)",
-  "var(--proxy-usage-series-2)",
-  "var(--proxy-usage-series-3)",
-  "var(--proxy-usage-series-4)",
-  "var(--proxy-usage-series-5)",
-  "var(--proxy-usage-series-6)",
-  "var(--proxy-usage-series-7)",
-  "var(--proxy-usage-series-8)",
-  "var(--proxy-usage-series-9)",
-  "var(--proxy-usage-series-10)",
-  "var(--proxy-usage-series-11)",
-  "var(--proxy-usage-series-12)",
-] as const;
-
-const API_PROXY_USAGE_TOOLTIP_SIZE = { width: 256, height: 104 };
-const API_PROXY_USAGE_TOOLTIP_GAP = 12;
-const API_PROXY_USAGE_CONTEXT_MENU_SIZE = { width: 176, height: 44 };
-const API_PROXY_USAGE_RANGE_SECONDS: Record<ApiProxyUsageRange, number> = {
-  "1h": 3_600,
-  "24h": 86_400,
-  "7d": 604_800,
-  "14d": 1_209_600,
-  "30d": 2_592_000,
-};
-
-function hashUsageModel(model: string) {
-  let hash = 0;
-  for (let index = 0; index < model.length; index += 1) {
-    hash = (Math.imul(31, hash) + model.charCodeAt(index)) >>> 0;
-  }
-  return hash;
-}
-
-function formatUsageKeySeriesLabel(label: string, keyId: string) {
-  const normalizedLabel = label.trim() || "Unnamed key";
-  const shortId = keyId.trim().slice(0, 8);
-  return shortId ? `${normalizedLabel} (${shortId})` : normalizedLabel;
+  return enabled ? [...values.filter((item) => item !== value), value] : values.filter((item) => item !== value);
 }
 
 function normalizeDisabledProxyModels(disabledModels: string[], supportedModels: string[]) {
-  const disabledSet = new Set(disabledModels);
-  return supportedModels.filter((model) => disabledSet.has(model));
+  const valid = new Set(supportedModels);
+  return disabledModels.filter((m) => valid.has(m));
 }
+
+const CHART_COLORS = [
+  "#38bdf8",
+  "#a78bfa",
+  "#34d399",
+  "#f472b6",
+  "#fbbf24",
+  "#60a5fa",
+  "#f87171",
+  "#4ade80",
+];
 
 function pickUsageColor(index: number) {
-  return API_PROXY_USAGE_PALETTE[index % API_PROXY_USAGE_PALETTE.length];
+  return CHART_COLORS[index % CHART_COLORS.length];
 }
 
-function formatUsageMetricValue(
-  value: number | undefined | null,
-  locale: string,
-  metric?: ApiProxyUsageMetric,
-) {
-  if (value === undefined || value === null || Number.isNaN(value)) {
-    return "--";
-  }
+type MappedPoint = { x: number; y: number; value: number; timestamp: number };
+type MappedSeries = {
+  id: string;
+  label: string;
+  color: string;
+  totalCalls: number;
+  totalTokens: number;
+  mapped: MappedPoint[];
+  pathD: string;
+};
 
-  const normalized = Math.max(0, Math.round(value));
-  void metric;
-  return new Intl.NumberFormat(locale, {
-    maximumFractionDigits: 0,
-    useGrouping: true,
-  }).format(normalized);
-}
-
-function formatUsageAxisValue(value: number | undefined | null) {
-  if (value === undefined || value === null || Number.isNaN(value)) {
-    return "--";
-  }
-
-  const normalized = Math.max(0, value);
-  if (normalized >= 1_000_000_000_000) {
-    return `${(normalized / 1_000_000_000_000).toFixed(1)}T`;
-  }
-  if (normalized >= 1_000_000) {
-    return `${(normalized / 1_000_000).toFixed(1)}M`;
-  }
-  if (normalized >= 1_000) {
-    return `${(normalized / 1_000).toFixed(1)}k`;
-  }
-
-  return String(Math.round(normalized));
-}
-
-function usageTooltipDateTimeOptions(range: ApiProxyUsageRange): Intl.DateTimeFormatOptions {
-  const options: Intl.DateTimeFormatOptions = {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  };
-
-  if (range === "1h") {
-    options.second = "2-digit";
-  }
-
-  if (range === "14d" || range === "30d") {
-    delete options.hour;
-    delete options.minute;
-    delete options.second;
-  }
-
-  return options;
-}
-
-function formatUsageTooltipTime(
-  locale: string,
-  bucketStartSec: number,
-  bucketEndSec: number,
-  range: ApiProxyUsageRange,
-) {
-  const startDate = new Date(bucketStartSec * 1000);
-  const endDate = new Date(bucketEndSec * 1000);
-
-  try {
-    const formatter = new Intl.DateTimeFormat(locale, usageTooltipDateTimeOptions(range));
-    const startLabel = formatter.format(startDate);
-    const endLabel = formatter.format(endDate);
-    return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
-  } catch {
-    return `${startDate.toLocaleString(locale)} - ${endDate.toLocaleString(locale)}`;
-  }
-}
-
-function interpolateSeriesAtX(
-  pointerX: number,
-  series: ApiProxyUsageSeriesView,
-) {
-  if (series.points.length === 0) {
-    return null;
-  }
-
-  if (series.points.length === 1) {
-    const point = series.points[0];
-    return {
-      x: point.x,
-      y: point.y,
-      timestamp: point.timestamp,
-      value: point.value,
-    };
-  }
-
-  const first = series.points[0];
-  const last = series.points[series.points.length - 1];
-
-  if (pointerX <= first.x) {
-    return {
-      x: first.x,
-      y: first.y,
-      timestamp: first.timestamp,
-      value: first.value,
-    };
-  }
-
-  if (pointerX >= last.x) {
-    return {
-      x: last.x,
-      y: last.y,
-      timestamp: last.timestamp,
-      value: last.value,
-    };
-  }
-
-  for (const segment of series.curveSegments) {
-    const { start, end } = segment;
-    const minX = Math.min(start.x, end.x);
-    const maxX = Math.max(start.x, end.x);
-
-    if (pointerX < minX || pointerX > maxX) {
-      continue;
-    }
-
-    const deltaX = end.x - start.x;
-    const t = deltaX === 0 ? 0 : (pointerX - start.x) / deltaX;
-    const oneMinusT = 1 - t;
-    const y =
-      oneMinusT ** 3 * start.y +
-      3 * oneMinusT ** 2 * t * segment.cp1y +
-      3 * oneMinusT * t ** 2 * segment.cp2y +
-      t ** 3 * end.y;
-
-    return {
-      x: pointerX,
-      y,
-      timestamp: start.timestamp + (end.timestamp - start.timestamp) * t,
-      value: start.value + (end.value - start.value) * t,
-    };
-  }
-
-  return null;
-}
-
-function resolveUsageBucketWindow(
-  pointerTimestamp: number,
-  chartStartTimestamp: number,
-  chartEndTimestamp: number,
-  bucketSeconds: number,
-  series: ApiProxyUsageSeriesView,
-) {
-  if (series.bucketPoints.length === 0) {
-    return null;
-  }
-
-  if (series.bucketPoints.length === 1) {
-    const point = series.bucketPoints[0];
-    return {
-      point,
-      bucketStartTimestamp: Math.max(chartStartTimestamp, point.timestamp),
-      bucketEndTimestamp: chartEndTimestamp,
-    };
-  }
-
-  for (let index = 0; index < series.bucketPoints.length; index += 1) {
-    const point = series.bucketPoints[index];
-    const nextPoint = series.bucketPoints[index + 1];
-    const rawBucketStart = point.timestamp;
-    const rawBucketEnd = nextPoint?.timestamp ?? point.timestamp + bucketSeconds;
-    const bucketStartTimestamp = Math.max(chartStartTimestamp, rawBucketStart);
-    const bucketEndTimestamp = Math.min(chartEndTimestamp, rawBucketEnd);
-
-    if (
-      pointerTimestamp >= bucketStartTimestamp &&
-      (pointerTimestamp < bucketEndTimestamp || index === series.bucketPoints.length - 1)
-    ) {
-      return {
-        point,
-        bucketStartTimestamp,
-        bucketEndTimestamp,
-      };
-    }
-  }
-
-  const lastPoint = series.bucketPoints[series.bucketPoints.length - 1];
-  return {
-    point: lastPoint,
-    bucketStartTimestamp: Math.max(chartStartTimestamp, lastPoint.timestamp),
-    bucketEndTimestamp: chartEndTimestamp,
-  };
-}
-
-function clampTooltipPosition(
-  anchorX: number,
-  anchorY: number,
-  frameWidth: number,
-  frameHeight: number,
-  tooltipSize: { width: number; height: number },
-) {
-  const prefersRight = anchorX + API_PROXY_USAGE_TOOLTIP_GAP + tooltipSize.width <= frameWidth - 12;
-  const prefersBottom =
-    anchorY + API_PROXY_USAGE_TOOLTIP_GAP + tooltipSize.height <= frameHeight - 12;
-
-  const left = prefersRight
-    ? anchorX + API_PROXY_USAGE_TOOLTIP_GAP
-    : anchorX - API_PROXY_USAGE_TOOLTIP_GAP - tooltipSize.width;
-  const top = prefersBottom
-    ? anchorY + API_PROXY_USAGE_TOOLTIP_GAP
-    : anchorY - API_PROXY_USAGE_TOOLTIP_GAP - tooltipSize.height;
-
-  return {
-    x: Math.max(12, Math.min(left, frameWidth - tooltipSize.width - 12)),
-    y: Math.max(12, Math.min(top, frameHeight - tooltipSize.height - 12)),
-  };
-}
-
-function getUsageTooltipSize(entryCount: number) {
-  return {
-    width: API_PROXY_USAGE_TOOLTIP_SIZE.width,
-    height: Math.min(250, 48 + Math.max(entryCount, 1) * 25),
-  };
-}
-
-function clampContextMenuPosition(
-  pointerX: number,
-  pointerY: number,
-  containerWidth: number,
-  containerHeight: number,
-) {
-  return {
-    x: Math.max(8, Math.min(pointerX, containerWidth - API_PROXY_USAGE_CONTEXT_MENU_SIZE.width - 8)),
-    y: Math.max(8, Math.min(pointerY, containerHeight - API_PROXY_USAGE_CONTEXT_MENU_SIZE.height - 8)),
-  };
-}
-
-function resolveUsageHoverState({
-  clientX,
-  clientY,
-  frameRect,
-  svgRect,
-  chartWidth,
-  chartHeight,
-  margins,
-  series,
-  locale,
-  range,
-  startTimestamp,
-  endTimestamp,
-  rangeSeconds,
-  bucketSeconds,
-  metric,
-  metricLabel,
-}: {
-  clientX: number;
-  clientY: number;
-  frameRect: DOMRect;
-  svgRect: DOMRect;
-  chartWidth: number;
-  chartHeight: number;
-  margins: { top: number; right: number; bottom: number; left: number };
-  series: ApiProxyUsageSeriesView[];
-  locale: string;
-  range: ApiProxyUsageRange;
-  startTimestamp: number;
-  endTimestamp: number;
-  rangeSeconds: number;
-  bucketSeconds: number;
-  metric: ApiProxyUsageMetric;
-  metricLabel: string;
-}): ApiProxyUsageHoverState | null {
-  if (series.length === 0 || svgRect.width <= 0 || svgRect.height <= 0) {
-    return null;
-  }
-
-  const scaleX = svgRect.width / chartWidth || 1;
-  const scaleY = svgRect.height / chartHeight || 1;
-  const relativeX = (clientX - svgRect.left) / scaleX;
-  const relativeY = (clientY - svgRect.top) / scaleY;
-  const plotLeft = margins.left;
-  const plotRight = margins.left + (chartWidth - margins.left - margins.right);
-  const plotTop = margins.top;
-  const plotBottom = margins.top + (chartHeight - margins.top - margins.bottom);
-
-  if (
-    relativeX < plotLeft ||
-    relativeX > plotRight ||
-    relativeY < plotTop ||
-    relativeY > plotBottom
-  ) {
-    return null;
-  }
-
-  const pointerTimestamp =
-    startTimestamp + ((relativeX - plotLeft) / Math.max(plotRight - plotLeft, 1)) * rangeSeconds;
-  const primaryBucket = resolveUsageBucketWindow(
-    pointerTimestamp,
-    startTimestamp,
-    endTimestamp,
-    bucketSeconds,
-    series[0],
-  );
-  if (!primaryBucket) {
-    return null;
-  }
-
-  const bucketStartX =
-    plotLeft +
-    ((primaryBucket.bucketStartTimestamp - startTimestamp) / Math.max(rangeSeconds, 1)) * (plotRight - plotLeft);
-  const bucketEndX =
-    plotLeft +
-    ((primaryBucket.bucketEndTimestamp - startTimestamp) / Math.max(rangeSeconds, 1)) * (plotRight - plotLeft);
-  const bucketCursorX = primaryBucket.point.x;
-
-    const entries = series
-      .map((item) => {
-        const bucket = resolveUsageBucketWindow(
-          pointerTimestamp,
-          startTimestamp,
-        endTimestamp,
-        bucketSeconds,
-        item,
-      );
-        if (!bucket) {
-          return null;
-        }
-        const interpolated = interpolateSeriesAtX(bucket.point.x, item);
-        if (!interpolated) {
-          return null;
-        }
-
-        return {
-          model: item.model,
-          color: item.color,
-          value: bucket.point.value,
-          valueLabel: formatUsageMetricValue(bucket.point.value, locale, metric),
-          pointX: interpolated.x,
-          pointY: interpolated.y,
-        };
-      })
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    .sort((left, right) => right.value - left.value || left.model.localeCompare(right.model));
-
-  if (entries.length === 0) {
-    return null;
-  }
-
-  const anchorX = clientX - frameRect.left;
-  const anchorY = clientY - frameRect.top;
-  const tooltipSize = getUsageTooltipSize(entries.length);
-  const tooltipPosition = clampTooltipPosition(
-    anchorX,
-    anchorY,
-    frameRect.width,
-    frameRect.height,
-    tooltipSize,
-  );
-
-  return {
-    cursorX: bucketCursorX,
-    cursorY: relativeY,
-    tooltipX: tooltipPosition.x,
-    tooltipY: tooltipPosition.y,
-    bucketStartTimestamp: primaryBucket.bucketStartTimestamp,
-    bucketEndTimestamp: primaryBucket.bucketEndTimestamp,
-    bucketStartX,
-    bucketEndX,
-    timeLabel: formatUsageTooltipTime(
-      locale,
-      Math.round(primaryBucket.bucketStartTimestamp),
-      Math.round(primaryBucket.bucketEndTimestamp),
-      range,
-    ),
-    metricLabel,
-    entries,
-  };
-}
-
-function formatUsageTickLabel(locale: string, timestampSec: number, range: ApiProxyUsageRange) {
-  const date = new Date(timestampSec * 1000);
-  if (range === "1h" || range === "24h") {
-    return new Intl.DateTimeFormat(locale, {
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
-  }
-
-  if (range === "7d") {
-    return new Intl.DateTimeFormat(locale, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-    }).format(date);
-  }
-
-  return new Intl.DateTimeFormat(locale, {
-    month: "short",
-    day: "numeric",
-  }).format(date);
-}
-
-function clampUsageValue(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function normalizeCurvePoints(points: ApiProxyUsagePlotPoint[]) {
-  const normalized: ApiProxyUsagePlotPoint[] = [];
-  for (const point of points) {
-    const previous = normalized[normalized.length - 1];
-    if (previous && Math.abs(previous.x - point.x) < 0.001) {
-      normalized[normalized.length - 1] = point;
-    } else {
-      normalized.push(point);
-    }
-  }
-
-  return normalized;
-}
-
-function buildMonotoneCurveSegments(points: ApiProxyUsagePlotPoint[]) {
-  const normalized = normalizeCurvePoints(points);
-  if (normalized.length < 2) {
-    return [] as ApiProxyUsageCurveSegment[];
-  }
-
-  const segmentSlopes = normalized.slice(0, -1).map((point, index) => {
-    const next = normalized[index + 1];
-    const deltaX = next.x - point.x;
-    return deltaX === 0 ? 0 : (next.y - point.y) / deltaX;
-  });
-
-  const tangents = normalized.map((_, index) => {
-    if (index === 0) {
-      return segmentSlopes[0] ?? 0;
-    }
-    if (index === normalized.length - 1) {
-      return segmentSlopes[segmentSlopes.length - 1] ?? 0;
-    }
-
-    const previousSlope = segmentSlopes[index - 1];
-    const nextSlope = segmentSlopes[index];
-    if (previousSlope === 0 || nextSlope === 0 || Math.sign(previousSlope) !== Math.sign(nextSlope)) {
-      return 0;
-    }
-
-    return (previousSlope + nextSlope) / 2;
-  });
-
-  for (let index = 0; index < segmentSlopes.length; index += 1) {
-    const slope = segmentSlopes[index];
-    if (slope === 0) {
-      tangents[index] = 0;
-      tangents[index + 1] = 0;
-      continue;
-    }
-
-    const alpha = tangents[index] / slope;
-    const beta = tangents[index + 1] / slope;
-    const distance = alpha ** 2 + beta ** 2;
-    if (distance > 9) {
-      const scale = 3 / Math.sqrt(distance);
-      tangents[index] = scale * alpha * slope;
-      tangents[index + 1] = scale * beta * slope;
-    }
-  }
-
-  return normalized.slice(0, -1).map((start, index) => {
-    const end = normalized[index + 1];
-    const deltaX = end.x - start.x;
-    const minSegmentY = Math.min(start.y, end.y);
-    const maxSegmentY = Math.max(start.y, end.y);
-    return {
-      start,
-      end,
-      cp1x: start.x + deltaX / 3,
-      cp1y: clampUsageValue(start.y + (tangents[index] * deltaX) / 3, minSegmentY, maxSegmentY),
-      cp2x: end.x - deltaX / 3,
-      cp2y: clampUsageValue(end.y - (tangents[index + 1] * deltaX) / 3, minSegmentY, maxSegmentY),
-    } satisfies ApiProxyUsageCurveSegment;
-  });
-}
-
-function buildSmoothPath(points: ApiProxyUsagePlotPoint[], segments: ApiProxyUsageCurveSegment[]) {
-  if (points.length === 0) {
-    return "";
-  }
-
-  if (points.length === 1) {
-    return `M ${points[0].x} ${points[0].y}`;
-  }
-
-  const first = segments[0]?.start ?? points[0];
-  let path = `M ${first.x} ${first.y}`;
-  for (const segment of segments) {
-    path += ` C ${segment.cp1x} ${segment.cp1y}, ${segment.cp2x} ${segment.cp2y}, ${segment.end.x} ${segment.end.y}`;
-  }
-
-  return path;
-}
-
-function buildAreaPath(points: ApiProxyUsagePlotPoint[], baselineY: number, linePath: string) {
-  if (points.length === 0) {
-    return "";
-  }
-
-  if (points.length === 1) {
-    const point = points[0];
-    return `M ${point.x} ${baselineY} L ${point.x} ${point.y} L ${point.x} ${baselineY} Z`;
-  }
-
-  const first = points[0];
-  const last = points[points.length - 1];
-  return `${linePath} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
-}
-
-function ApiProxyUsageChart({
-  copy,
-  locale,
+// 200px 紧凑用量图表
+function CompactUsageChart({
   stats,
   range,
   metric,
   loading,
   clearing,
   exporting,
-  proxyRunning,
   apiProxyKeys,
   onSelectRange,
   onSelectMetric,
   onExport,
   onClear,
-}: ApiProxyUsageChartProps) {
-  const rangeOptions: Array<{ value: ApiProxyUsageRange; label: string }> = [
-    { value: "1h", label: "1h" },
-    { value: "24h", label: "24h" },
-    { value: "7d", label: "7d" },
-    { value: "14d", label: "14d" },
-    { value: "30d", label: "30d" },
-  ];
-  const metricOptions: Array<{ value: ApiProxyUsageMetric; label: string }> = [
-    { value: "calls", label: copy.chartCalls },
-    { value: "tokens", label: copy.chartTokens },
-  ];
-  const chartWidth = 960;
-  const chartHeight = 320;
-  const margins = useMemo(() => ({ top: 18, right: 44, bottom: 46, left: 56 }), []);
-  const plotWidth = chartWidth - margins.left - margins.right;
-  const plotHeight = chartHeight - margins.top - margins.bottom;
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const cardRef = useRef<HTMLElement | null>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const [dimension, setDimension] = useState<ApiProxyUsageDimension>("model");
+}: {
+  stats: ApiProxyUsageStats | null;
+  range: ApiProxyUsageRange;
+  metric: ApiProxyUsageMetric;
+  loading: boolean;
+  clearing: boolean;
+  exporting: boolean;
+  apiProxyKeys: ApiProxyKey[];
+  onSelectRange: (range: ApiProxyUsageRange) => void;
+  onSelectMetric: (metric: ApiProxyUsageMetric) => void;
+  onExport: (keyId: string | null) => Promise<void> | void;
+  onClear: () => void;
+}) {
+  const { copy, locale } = useI18n();
+  const [dimension, setDimension] = useState<"model" | "key">("model");
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [clearConfirming, setClearConfirming] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportKeyId, setExportKeyId] = useState("");
-  const [hoverState, setHoverState] = useState<ApiProxyUsageHoverState | null>(null);
-  const [contextMenu, setContextMenu] = useState<ApiProxyUsageContextMenu | null>(null);
-  const [chartMotion, setChartMotion] = useState<ApiProxyUsageChartMotion>({
-    id: 0,
-    mode: "rise",
-    offset: 0,
-  });
-  const chartMotionIdRef = useRef(0);
-  const previousChartWindowRef = useRef<{
-    range: ApiProxyUsageRange;
-    metric: ApiProxyUsageMetric;
-    endTimestamp: number;
-  } | null>(null);
-  const selectedRangeSeconds = API_PROXY_USAGE_RANGE_SECONDS[range];
-  const exportKeyOptions = useMemo(() => {
-    const options = new Map<string, string>();
-    // 以当前统计范围为主，确保已删除或停用但仍有历史记录的 Key 也可以导出。
-    for (const key of stats?.keySeries ?? []) {
-      if (key.keyId) {
-        options.set(key.keyId, key.keyLabel || key.keyId);
-      }
-    }
-    // 同时补入当前 Key，便于在尚无历史记录时预先选择过滤条件。
-    for (const key of apiProxyKeys) {
-      if (!options.has(key.id)) {
-        options.set(key.id, key.label || key.id);
-      }
-    }
-    return [...options].map(([id, label]) => ({ id, label }));
-  }, [apiProxyKeys, stats?.keySeries]);
+  const [activePointIndex, setActivePointIndex] = useState<number | null>(null);
 
-  const effectiveExportKeyId = exportKeyOptions.some((key) => key.id === exportKeyId)
-    ? exportKeyId
-    : "";
+  const clearTimerRef = useRef<number | null>(null);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const chartData = useMemo(() => {
-    const sourceSeries =
-      dimension === "key"
-        ? (stats?.keySeries ?? []).map((item) => ({
-            model: formatUsageKeySeriesLabel(item.keyLabel, item.keyId),
-            totalCalls: item.totalCalls,
-            totalTokens: item.totalTokens,
-            points: item.points,
-          }))
-        : (stats?.series ?? []);
-    const ordered = [...sourceSeries].sort((left, right) =>
-      left.model.localeCompare(right.model),
-    );
-    const latestPointTimestamp = ordered.reduce((max, item) => {
-      const latestPoint = item.points.reduce((pointMax, point) => Math.max(pointMax, point.timestamp), 0);
-      return Math.max(max, latestPoint);
-    }, 0);
-    const endTimestamp = Math.max(stats?.updatedAt ?? 0, latestPointTimestamp);
-
-    if (ordered.length === 0) {
-      return {
-        series: [] as ApiProxyUsageSeriesView[],
-        maxValue: 0,
-        endTimestamp,
-      };
-    }
-
-    const startTimestamp = endTimestamp - selectedRangeSeconds;
-    const baselineY = margins.top + plotHeight;
-    const bucketSeconds = Math.max(1, stats?.bucketSeconds ?? selectedRangeSeconds);
-
-    const prepared = ordered.map((item, index) => {
-      const color = pickUsageColor(index);
-      const metricPoints = [...item.points]
-        .sort((left, right) => left.timestamp - right.timestamp)
-        .map((point) => ({
-          timestamp: point.timestamp,
-          value: metric === "calls" ? point.calls : point.tokens,
-        }))
-        .filter((point) => Number.isFinite(point.value));
-
-      return {
-        model: item.model,
-        color,
-        gradientId: `proxy-usage-gradient-${index}-${hashUsageModel(item.model)}`,
-        totalCalls: item.totalCalls,
-        totalTokens: item.totalTokens,
-        totalValue: metric === "calls" ? item.totalCalls : item.totalTokens,
-        metricPoints,
-      };
-    });
-
-    let maxValue = 0;
-    for (const item of prepared) {
-      for (const point of item.metricPoints) {
-        if (point.value > maxValue) {
-          maxValue = point.value;
-        }
-      }
-    }
-
-    if (maxValue <= 0) {
-      return {
-        series: [] as ApiProxyUsageSeriesView[],
-        maxValue: 0,
-        endTimestamp,
-      };
-    }
-
-    const yDomain = maxValue * 1.12;
-    const series = prepared.map((item) => {
-      const bucketPoints = item.metricPoints.map((point, index) => {
-        const nextPoint = item.metricPoints[index + 1];
-        const bucketStartTimestamp = clampUsageValue(point.timestamp, startTimestamp, endTimestamp);
-        const bucketEndTimestamp = clampUsageValue(
-          nextPoint?.timestamp ?? endTimestamp,
-          startTimestamp,
-          endTimestamp,
-        );
-        const bucketMidTimestamp =
-          bucketStartTimestamp + (bucketEndTimestamp - bucketStartTimestamp) / 2;
-        const x =
-          margins.left +
-          ((bucketMidTimestamp - startTimestamp) / Math.max(selectedRangeSeconds, 1)) * plotWidth;
-        const y = baselineY - (Math.max(0, point.value) / yDomain) * plotHeight;
-        return {
-          timestamp: point.timestamp,
-          value: point.value,
-          x: clampUsageValue(x, margins.left, margins.left + plotWidth),
-          y: clampUsageValue(y, margins.top, baselineY),
-        };
-      });
-
-      const firstBucket = bucketPoints[0];
-      const lastBucket = bucketPoints[bucketPoints.length - 1];
-      const pointValues =
-        firstBucket && lastBucket
-          ? [
-              {
-                timestamp: startTimestamp,
-                value: firstBucket.value,
-                x: margins.left,
-                y: firstBucket.y,
-              },
-              ...bucketPoints,
-              {
-                timestamp: endTimestamp,
-                value: lastBucket.value,
-                x: margins.left + plotWidth,
-                y: lastBucket.y,
-              },
-            ]
-          : [];
-
-      const points = pointValues;
-
-      const curveSegments = buildMonotoneCurveSegments(points);
-      const linePath = buildSmoothPath(points, curveSegments);
-      const areaPath = buildAreaPath(points, baselineY, linePath);
-
-      return {
-        model: item.model,
-        color: item.color,
-        gradientId: item.gradientId,
-        totalCalls: item.totalCalls,
-        totalTokens: item.totalTokens,
-        totalValue: item.totalValue,
-        bucketPoints,
-        points,
-        curveSegments,
-        linePath,
-        areaPath,
-      } satisfies ApiProxyUsageSeriesView;
-    });
-
-    return {
-      series,
-      bucketSeconds,
-      maxValue,
-      endTimestamp,
-    };
-  }, [
-    dimension,
-    metric,
-    margins.left,
-    margins.top,
-    plotHeight,
-    plotWidth,
-    selectedRangeSeconds,
-    stats,
-  ]);
-
-  const series = chartData.series;
-  const bucketSeconds = chartData.bucketSeconds ?? Math.max(1, selectedRangeSeconds);
-  const hasUsageData = chartData.maxValue > 0 && series.length > 0;
-  const endTimestamp = chartData.endTimestamp;
-  const startTimestamp = endTimestamp - selectedRangeSeconds;
-  const metricLabel = metric === "calls" ? copy.chartCalls : copy.chartTokens;
-  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((fraction) => {
-    const timestamp = Math.round(endTimestamp - selectedRangeSeconds + selectedRangeSeconds * fraction);
-    const anchor: "start" | "middle" | "end" =
-      fraction === 1 ? "end" : fraction === 0 ? "start" : "middle";
-    return {
-      timestamp,
-      x: margins.left + plotWidth * fraction,
-      anchor,
-      label: formatUsageTickLabel(locale, timestamp, range),
-    };
-  });
-
-  const yDomain = chartData.maxValue > 0 ? chartData.maxValue * 1.12 : 1;
-  const yTicks = hasUsageData
-    ? [...new Set([0, 0.25, 0.5, 0.75, 1].map((fraction) => Math.round(yDomain * fraction)))]
-        .filter((value) => Number.isFinite(value))
-        .sort((left, right) => left - right)
-        .map((value) => ({
-          value,
-          y: margins.top + plotHeight - (value / yDomain) * plotHeight,
-        }))
-    : [];
-  const updatedLabel = stats
-    ? new Date(stats.updatedAt * 1000).toLocaleString(locale)
-    : null;
-
-  const chartMotionClass =
-    chartMotion.mode === "rise"
-      ? " isRising"
-      : chartMotion.mode === "slide"
-        ? " isSliding"
-        : "";
-  const chartMotionStyle = {
-    transformOrigin: `${margins.left + plotWidth / 2}px ${margins.top + plotHeight}px`,
-    "--proxyUsageSlideOffset": `${chartMotion.offset}px`,
-  } as CSSProperties & Record<"--proxyUsageSlideOffset", string>;
-
+  // 点击外部关闭菜单
   useEffect(() => {
-    if (!hasUsageData || endTimestamp <= 0) {
-      previousChartWindowRef.current = null;
+    if (!moreMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handleClick);
+    return () => window.removeEventListener("mousedown", handleClick);
+  }, [moreMenuOpen]);
+
+  const handleClearClick = () => {
+    if (!clearConfirming) {
+      setClearConfirming(true);
+      clearTimerRef.current = window.setTimeout(() => {
+        setClearConfirming(false);
+        clearTimerRef.current = null;
+      }, 3000);
       return;
     }
-
-    const previous = previousChartWindowRef.current;
-    let nextMotion: ApiProxyUsageChartMotion | null = null;
-    if (!previous || previous.range !== range || previous.metric !== metric) {
-      nextMotion = {
-        id: chartMotionIdRef.current + 1,
-        mode: "rise",
-        offset: 0,
-      };
-    } else if (endTimestamp > previous.endTimestamp) {
-      const advancedSeconds = endTimestamp - previous.endTimestamp;
-      const offset = Math.min(
-        plotWidth,
-        (advancedSeconds / Math.max(selectedRangeSeconds, 1)) * plotWidth,
-      );
-      if (offset > 0) {
-        nextMotion = {
-          id: chartMotionIdRef.current + 1,
-          mode: "slide",
-          offset,
-        };
-      }
+    if (clearTimerRef.current !== null) {
+      window.clearTimeout(clearTimerRef.current);
+      clearTimerRef.current = null;
     }
+    setClearConfirming(false);
+    setMoreMenuOpen(false);
+    onClear();
+  };
 
-    previousChartWindowRef.current = { range, metric, endTimestamp };
-    if (!nextMotion) {
-      return;
+  useEffect(() => () => {
+    if (clearTimerRef.current !== null) {
+      window.clearTimeout(clearTimerRef.current);
     }
-
-    chartMotionIdRef.current = nextMotion.id;
-    const animationFrame = window.requestAnimationFrame(() => {
-      setChartMotion(nextMotion);
-    });
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [endTimestamp, hasUsageData, metric, plotWidth, range, selectedRangeSeconds]);
-
-  const refreshHoverState = useCallback(
-    (clientX: number, clientY: number) => {
-      const frameRect = frameRef.current?.getBoundingClientRect();
-      const svgRect = svgRef.current?.getBoundingClientRect();
-      if (!frameRect || !svgRect || !hasUsageData) {
-        setHoverState(null);
-        return;
-      }
-
-      const next = resolveUsageHoverState({
-        clientX,
-        clientY,
-        frameRect,
-        svgRect,
-        chartWidth,
-        chartHeight,
-        margins,
-        series,
-        locale,
-        range,
-        startTimestamp,
-        endTimestamp,
-        rangeSeconds: selectedRangeSeconds,
-        bucketSeconds,
-        metric,
-        metricLabel,
-      });
-
-      setHoverState(next);
-    },
-    [bucketSeconds, chartHeight, chartWidth, endTimestamp, hasUsageData, locale, margins, metric, metricLabel, range, selectedRangeSeconds, series, startTimestamp],
-  );
-
-  const handlePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      refreshHoverState(event.clientX, event.clientY);
-    },
-    [refreshHoverState],
-  );
-
-  const handlePointerLeave = useCallback(() => {
-    setHoverState(null);
   }, []);
 
-  useEffect(() => {
-    if (!contextMenu) {
-      return;
+  const chartSeries = useMemo(() => {
+    if (!stats) return [];
+    if (dimension === "model") {
+      return (stats.series ?? []).map((s: ApiProxyUsageSeries, idx: number) => {
+        const color = pickUsageColor(idx);
+        const points = (s.points ?? []).map((p: ApiProxyUsagePoint) => ({
+          timestamp: p.timestamp,
+          value: metric === "calls" ? p.calls : p.tokens,
+        }));
+        return {
+          id: s.model,
+          label: s.model,
+          color,
+          points,
+          totalCalls: s.totalCalls ?? 0,
+          totalTokens: s.totalTokens ?? 0,
+        };
+      });
     }
+    return (stats.keySeries ?? []).map((s: ApiProxyUsageKeySeries, idx: number) => {
+      const color = pickUsageColor(idx);
+      const points = (s.points ?? []).map((p: ApiProxyUsagePoint) => ({
+        timestamp: p.timestamp,
+        value: metric === "calls" ? p.calls : p.tokens,
+      }));
+      return {
+        id: s.keyId,
+        label: s.keyLabel || s.keyId,
+        color,
+        points,
+        totalCalls: s.totalCalls ?? 0,
+        totalTokens: s.totalTokens ?? 0,
+      };
+    });
+  }, [dimension, metric, stats]);
 
-    const closeMenu = () => {
-      setContextMenu(null);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closeMenu();
+  // 计算统一坐标点
+  const chartWidth = 384;
+  const chartHeight = 180;
+  const paddingLeft = 32;
+  const paddingRight = 12;
+  const paddingTop = 12;
+  const paddingBottom = 24;
+
+  const plotWidth = chartWidth - paddingLeft - paddingRight;
+  const plotHeight = chartHeight - paddingTop - paddingBottom;
+
+  const allTimestamps = useMemo(() => {
+    const set = new Set<number>();
+    for (const s of chartSeries) {
+      for (const p of s.points) {
+        set.add(p.timestamp);
       }
-    };
+    }
+    return [...set].sort((a, b) => a - b);
+  }, [chartSeries]);
 
-    window.addEventListener("click", closeMenu);
-    window.addEventListener("resize", closeMenu);
-    window.addEventListener("scroll", closeMenu, true);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("click", closeMenu);
-      window.removeEventListener("resize", closeMenu);
-      window.removeEventListener("scroll", closeMenu, true);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [contextMenu]);
-
-  const handleOpenContextMenu = useCallback(
-    (event: ReactMouseEvent<HTMLElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const cardRect = cardRef.current?.getBoundingClientRect();
-      if (!cardRect) {
-        return;
+  const maxVal = useMemo(() => {
+    let max = 0;
+    for (const s of chartSeries) {
+      for (const p of s.points) {
+        if (p.value > max) max = p.value;
       }
-      const position = clampContextMenuPosition(
-        event.clientX - cardRect.left,
-        event.clientY - cardRect.top,
-        cardRect.width,
-        cardRect.height,
+    }
+    return Math.max(max, 1);
+  }, [chartSeries]);
+
+  const minTime = allTimestamps[0] ?? 0;
+  const maxTime = allTimestamps[allTimestamps.length - 1] ?? 1;
+  const timeSpan = Math.max(maxTime - minTime, 1);
+
+  const lines: MappedSeries[] = useMemo(() => {
+    return chartSeries.map((s) => {
+      const mapped: MappedPoint[] = s.points.map((p) => {
+        const x = paddingLeft + ((p.timestamp - minTime) / timeSpan) * plotWidth;
+        const y = paddingTop + plotHeight - (p.value / maxVal) * plotHeight;
+        return { x, y, value: p.value, timestamp: p.timestamp };
+      });
+      const pathD = mapped.reduce(
+        (acc: string, pt: MappedPoint, i: number) =>
+          i === 0 ? `M ${pt.x},${pt.y}` : `${acc} L ${pt.x},${pt.y}`,
+        "",
       );
-      setContextMenu(position);
-    },
-    [],
-  );
+      return {
+        id: s.id,
+        label: s.label,
+        color: s.color,
+        totalCalls: s.totalCalls,
+        totalTokens: s.totalTokens,
+        mapped,
+        pathD,
+      };
+    });
+  }, [chartSeries, minTime, timeSpan, plotWidth, paddingTop, plotHeight, maxVal]);
 
-  const handleClearUsage = useCallback(() => {
-    if (clearing || exporting) {
-      return;
-    }
-    setContextMenu(null);
-    void onClear();
-  }, [clearing, exporting, onClear]);
-
-  const handleContextMenuClick = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      handleClearUsage();
-    },
-    [handleClearUsage],
-  );
+  const hasData = chartSeries.some((s) => s.points.length > 0 && s.points.some((p) => p.value > 0));
 
   return (
-    <section
-      ref={cardRef}
-      className={`proxySectionCard proxyUsageCard${proxyRunning ? " isRunning" : ""}`}
-      onContextMenu={handleOpenContextMenu}
-    >
-      <div className="proxyUsageHeader">
-        <div className="proxyUsageHeading">
-          <span className="proxyLabel">{copy.chartKicker}</span>
-          <h3>{copy.chartTitle}</h3>
-        </div>
-        <div className="proxyUsageHeaderMeta">
-          <span className={`proxyHeaderStat proxyUsageStatus${proxyRunning ? " isRunning" : ""}`}>
-            <span className={`proxyStatusDot${proxyRunning ? " isRunning" : ""}`} aria-hidden="true" />
-            <span>{copy.chartKicker}</span>
-            <strong>{proxyRunning ? copy.statusRunning : copy.statusStopped}</strong>
-          </span>
-          {updatedLabel ? <span className="proxyUsageUpdated">{copy.chartUpdatedAt}: {updatedLabel}</span> : null}
-        </div>
-      </div>
+    <div className="compactUsageContainer">
+      {/* 1. 工具栏第一行：两个下拉 + 更多菜单 */}
+      <div className="compactUsageControlsRow1">
+        <div className="compactUsageDropdownGroup">
+          <select
+            className="compactSelect"
+            value={dimension}
+            onChange={(e) => setDimension(e.target.value as "model" | "key")}
+            aria-label="统计维度"
+          >
+            <option value="model">{copy.apiProxy.chartByModel}</option>
+            <option value="key">{copy.apiProxy.chartByKey}</option>
+          </select>
 
-      <div className="proxyUsageControls">
-        <div className="proxyUsageGroup" role="group" aria-label={copy.chartDimensionLabel}>
-          {([
-            { value: "model", label: copy.chartByModel },
-            { value: "key", label: copy.chartByKey },
-          ] as const).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`proxyUsageChip${dimension === option.value ? " isActive" : ""}`}
-              aria-pressed={dimension === option.value}
-              onClick={() => setDimension(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
+          <select
+            className="compactSelect"
+            value={metric}
+            onChange={(e) => onSelectMetric(e.target.value as ApiProxyUsageMetric)}
+            aria-label="统计指标"
+          >
+            <option value="calls">{copy.apiProxy.chartCalls}</option>
+            <option value="tokens">{copy.apiProxy.chartTokens}</option>
+          </select>
         </div>
 
-        <div className="proxyUsageGroup" role="group" aria-label={copy.chartRangeLabel}>
-          {rangeOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`proxyUsageChip${range === option.value ? " isActive" : ""}`}
-              aria-pressed={range === option.value}
-              onClick={() => {
-                if (option.value !== range) {
-                  setExportKeyId("");
-                }
-                onSelectRange(option.value);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="proxyUsageGroup" role="group" aria-label={copy.chartMetricLabel}>
-          {metricOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`proxyUsageChip${metric === option.value ? " isActive" : ""}`}
-              aria-pressed={metric === option.value}
-              onClick={() => onSelectMetric(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="proxyUsageExportGroup">
-          <label className="proxyUsageExportPicker">
-            <span>{copy.chartExportKeyLabel}</span>
-            <select
-              value={effectiveExportKeyId}
-              disabled={exporting || clearing}
-              aria-label={copy.chartExportKeyLabel}
-              onChange={(event) => setExportKeyId(event.currentTarget.value)}
-            >
-              <option value="">{copy.chartExportAllKeys}</option>
-              {exportKeyOptions.map((key) => (
-                <option key={key.id} value={key.id}>
-                  {key.label || key.id}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="compactMoreMenuWrap" ref={moreMenuRef}>
           <button
             type="button"
-            className="ghost proxyUsageExportButton"
-            disabled={exporting || clearing}
-            onClick={() => void onExport(effectiveExportKeyId || null)}
+            className="compactIconButton"
+            onClick={() => setMoreMenuOpen((o) => !o)}
+            aria-label="用量更多操作"
+            title="用量更多操作"
           >
-            {exporting ? copy.chartExporting : copy.chartExportCsv}
+            <svg className="iconGlyph" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="2" />
+              <circle cx="19" cy="12" r="2" />
+              <circle cx="5" cy="12" r="2" />
+            </svg>
           </button>
+
+          {moreMenuOpen ? (
+            <div className="compactDropdownMenu">
+              <button
+                type="button"
+                className="compactMenuItem"
+                disabled={exporting || clearing}
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setExportModalOpen(true);
+                }}
+              >
+                {exporting ? copy.apiProxy.chartExporting : copy.apiProxy.chartExportCsv}
+              </button>
+              <div className="compactMenuDivider" />
+              <button
+                type="button"
+                className={`compactMenuItem${clearConfirming ? " tone-danger" : ""}`}
+                disabled={clearing || exporting}
+                onClick={handleClearClick}
+              >
+                {clearConfirming
+                  ? (locale.startsWith("zh") ? "确认清除统计数据？" : "Confirm clear?")
+                  : (locale.startsWith("zh") ? "清除用量统计" : "Clear statistics")}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div
-        ref={frameRef}
-        className={`proxyUsageFrame${loading ? " isLoading" : ""}${hasUsageData ? " hasData" : ""}`}
-        onContextMenu={handleOpenContextMenu}
-        onPointerMove={handlePointerMove}
-        onPointerLeave={handlePointerLeave}
-      >
-        {hasUsageData ? (
-          <>
-            <svg
-              ref={svgRef}
-              className="proxyUsageSvg"
-              viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-              role="img"
-              aria-label={`${copy.chartTitle} ${metric === "calls" ? copy.chartCalls : copy.chartTokens}`}
-            >
-              <defs>
-                <clipPath id="proxy-usage-clip">
-                  <rect x={margins.left} y={margins.top} width={plotWidth} height={plotHeight} rx="14" />
-                </clipPath>
-                {series.map((item) => (
-                  <linearGradient
-                    key={item.gradientId}
-                    id={item.gradientId}
-                    x1="0%"
-                    x2="0%"
-                    y1="0%"
-                    y2="100%"
-                  >
-                    <stop offset="0%" stopColor={item.color} stopOpacity="0.34" />
-                    <stop offset="100%" stopColor={item.color} stopOpacity="0.02" />
-                  </linearGradient>
-                ))}
-              </defs>
+      {/* 2. 工具栏第二行：五个时间范围等宽分段控件 */}
+      <div className="compactRangeSegmented">
+        {(["1h", "24h", "7d", "14d", "30d"] as const).map((r) => (
+          <button
+            key={r}
+            type="button"
+            className={`compactRangeButton${range === r ? " isActive" : ""}`}
+            onClick={() => onSelectRange(r)}
+          >
+            {r}
+          </button>
+        ))}
+      </div>
 
-              <rect className="proxyUsagePlotBg" x={margins.left} y={margins.top} width={plotWidth} height={plotHeight} rx="14" />
-
-              <g className="proxyUsageGrid">
-                {yTicks.map((tick) => (
-                  <g key={`y-${tick.value}`}>
-                    <line x1={margins.left} x2={margins.left + plotWidth} y1={tick.y} y2={tick.y} />
-                    <text x={margins.left - 10} y={tick.y + 4} textAnchor="end">
-                      {formatUsageAxisValue(tick.value)}
-                    </text>
-                  </g>
-                ))}
-                {xTicks.map((tick, index) => (
-                  <g key={`x-${tick.timestamp}-${index}`}>
-                    <line x1={tick.x} x2={tick.x} y1={margins.top} y2={margins.top + plotHeight} className="proxyUsageGridLineVertical" />
-                    <text x={tick.x} y={margins.top + plotHeight + 24} textAnchor={tick.anchor}>
-                      {tick.label}
-                    </text>
-                  </g>
-                ))}
-              </g>
-
-              <g clipPath="url(#proxy-usage-clip)">
-                <g
-                  key={chartMotion.id}
-                  className={`proxyUsageAnimatedPlot${chartMotionClass}`}
-                  style={chartMotionStyle}
-                >
-                  {series.map((item) => (
-                    <g
-                      key={item.gradientId}
-                      className="proxyUsageSeries"
-                    >
-                      <path className="proxyUsageArea" d={item.areaPath} fill={`url(#${item.gradientId})`} />
-                      <path className="proxyUsageLine" d={item.linePath} stroke={item.color} />
-                    </g>
-                  ))}
-                </g>
-                {hoverState ? (
-                  <g className="proxyUsageHoverLayer" pointerEvents="none">
-                    <rect
-                      className="proxyUsageHoverBand"
-                      x={hoverState.bucketStartX}
-                      y={margins.top}
-                      width={Math.max(1, hoverState.bucketEndX - hoverState.bucketStartX)}
-                      height={plotHeight}
-                    />
-                    <line
-                      className="proxyUsageHoverCrosshair"
-                      x1={hoverState.cursorX}
-                      x2={hoverState.cursorX}
-                      y1={margins.top}
-                      y2={margins.top + plotHeight}
-                    />
-                    {hoverState.entries.map((entry) => (
-                      <g key={`${entry.model}-${entry.pointX}-${entry.pointY}`}>
-                        <circle
-                          className="proxyUsageHoverMarkerHalo"
-                          cx={entry.pointX}
-                          cy={entry.pointY}
-                          r="7"
-                          fill={entry.color}
-                        />
-                        <circle
-                          className="proxyUsageHoverMarker"
-                          cx={entry.pointX}
-                          cy={entry.pointY}
-                          r="3.5"
-                          fill={entry.color}
-                        />
-                      </g>
-                    ))}
-                  </g>
-                ) : null}
-              </g>
-            </svg>
-            {hoverState ? (
-              <div
-                className="proxyUsageTooltip"
-                style={{ left: hoverState.tooltipX, top: hoverState.tooltipY }}
-                aria-hidden="true"
-              >
-                <div className="proxyUsageTooltipHeader">
-                  <span className="proxyUsageTooltipTime">{hoverState.timeLabel}</span>
-                  <span className="proxyUsageTooltipMetricLabel">{hoverState.metricLabel}</span>
-                </div>
-                <div className="proxyUsageTooltipEntries">
-                  {hoverState.entries.map((entry) => (
-                    <div className="proxyUsageTooltipEntry" key={`${entry.model}-${entry.value}`}>
-                      <span className="proxyUsageTooltipSwatch" style={{ background: entry.color }} />
-                      <span className="proxyUsageTooltipEntryModel" title={entry.model}>
-                        {entry.model}
-                      </span>
-                      <strong className="proxyUsageTooltipEntryValue">{entry.valueLabel}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {loading ? <div className="proxyUsageFrameBadge">{copy.chartLoadingTitle}</div> : null}
-          </>
-        ) : (
-          <div className="proxyUsageState" aria-live="polite" aria-busy={loading || clearing}>
-            <span className={`proxyUsageStateOrb${loading ? " isLoading" : ""}`} />
-            <strong>{loading ? copy.chartLoadingTitle : copy.chartEmptyTitle}</strong>
-            <p>{loading ? copy.chartLoadingDescription : copy.chartEmptyDescription}</p>
+      {/* 3. 200px 响应式折线图 */}
+      <div className="compactChartFrame">
+        {loading ? (
+          <div className="compactChartOverlay">
+            <span className="compactChartSpinner" />
           </div>
+        ) : null}
+
+        {!hasData && !loading ? (
+          <div className="compactEmptyChart">
+            <span>{copy.apiProxy.chartEmptyTitle}</span>
+          </div>
+        ) : (
+          <svg
+            className="compactChartSvg"
+            viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+            role="img"
+            aria-label={copy.apiProxy.chartTitle}
+          >
+            {/* 网格线与刻度 */}
+            <line
+              x1={paddingLeft}
+              y1={paddingTop + plotHeight}
+              x2={paddingLeft + plotWidth}
+              y2={paddingTop + plotHeight}
+              stroke="var(--line)"
+              strokeWidth="1"
+            />
+            <line
+              x1={paddingLeft}
+              y1={paddingTop + plotHeight / 2}
+              x2={paddingLeft + plotWidth}
+              y2={paddingTop + plotHeight / 2}
+              stroke="var(--line)"
+              strokeDasharray="2 2"
+              strokeWidth="1"
+            />
+            <text
+              x={paddingLeft - 4}
+              y={paddingTop + 8}
+              textAnchor="end"
+              fill="var(--muted)"
+              fontSize="9"
+              fontFamily="var(--font-ui)"
+            >
+              {formatNumber(maxVal, locale)}
+            </text>
+            <text
+              x={paddingLeft - 4}
+              y={paddingTop + plotHeight}
+              textAnchor="end"
+              fill="var(--muted)"
+              fontSize="9"
+              fontFamily="var(--font-ui)"
+            >
+              0
+            </text>
+
+            {/* 数据折线 */}
+            {lines.map((l: MappedSeries) => (
+              <g key={l.id}>
+                <path
+                  d={l.pathD}
+                  fill="none"
+                  stroke={l.color}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                {l.mapped.map((pt: MappedPoint, i: number) => (
+                  <circle
+                    key={i}
+                    cx={pt.x}
+                    cy={pt.y}
+                    r={activePointIndex === i ? "4" : "2"}
+                    fill={l.color}
+                    stroke="var(--bg-1)"
+                    strokeWidth="1"
+                    className="compactChartPoint"
+                    tabIndex={0}
+                    onFocus={() => setActivePointIndex(i)}
+                    onMouseEnter={() => setActivePointIndex(i)}
+                  />
+                ))}
+              </g>
+            ))}
+          </svg>
         )}
       </div>
 
-      {contextMenu ? (
-        <div
-          className="proxyUsageContextMenu"
-          role="menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <button
-            type="button"
-            className="proxyUsageContextMenuItem"
-            role="menuitem"
-            disabled={clearing || exporting}
-            onClick={handleContextMenuClick}
-          >
-            {copy.chartClearHistory}
-          </button>
-        </div>
-      ) : null}
+      {/* 4. 单列图例 */}
+      <div className="compactUsageLegend">
+        {lines.map((s: MappedSeries) => (
+          <div key={s.id} className="compactUsageLegendRow">
+            <div className="compactLegendTitle">
+              <span className="compactLegendDot" style={{ backgroundColor: s.color }} />
+              <strong className="compactLegendName" title={s.label}>
+                {s.label}
+              </strong>
+            </div>
+            <div className="compactLegendValues">
+              <span>{s.totalCalls} {locale.startsWith("zh") ? "次" : "calls"}</span>
+              <span>·</span>
+              <span>{formatTokenCount(s.totalTokens, locale)} Tok</span>
+            </div>
+          </div>
+        ))}
+      </div>
 
-      {hasUsageData ? (
-        <div className="proxyUsageLegend" aria-label={copy.chartTitle}>
-          {series.map((item) => {
-            const primary = metric === "calls" ? item.totalCalls : item.totalTokens;
-            const secondary = metric === "calls" ? item.totalTokens : item.totalCalls;
-            return (
-              <article key={item.gradientId} className="proxyUsageLegendItem">
-                <span className="proxyUsageLegendSwatch" style={{ background: item.color }} aria-hidden="true" />
-                <div className="proxyUsageLegendBody">
-                  <strong title={item.model}>{item.model}</strong>
-                  <span>
-                    {formatUsageMetricValue(primary, locale)} {metric === "calls" ? copy.chartCalls : copy.chartTokens}
-                  </span>
-                  <small>
-                    {formatUsageMetricValue(secondary, locale)} {metric === "calls" ? copy.chartTokens : copy.chartCalls}
-                  </small>
-                </div>
-              </article>
-            );
-          })}
+      {/* 导出过滤 Modal */}
+      {exportModalOpen ? (
+        <div className="compactModalBackdrop">
+          <div className="compactModalCard">
+            <h4>{copy.apiProxy.chartExportCsv}</h4>
+            <label className="compactModalField">
+              <span>{copy.apiProxy.chartExportKeyLabel}</span>
+              <select
+                className="compactSelect"
+                value={exportKeyId}
+                onChange={(e) => setExportKeyId(e.target.value)}
+              >
+                <option value="">{copy.apiProxy.chartExportAllKeys}</option>
+                {apiProxyKeys.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.label || k.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="compactModalActions">
+              <button
+                type="button"
+                className="compactModalCancelBtn"
+                onClick={() => setExportModalOpen(false)}
+              >
+                {locale.startsWith("zh") ? "取消" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                className="compactModalConfirmBtn"
+                disabled={exporting}
+                onClick={async () => {
+                  await onExport(exportKeyId || null);
+                  setExportModalOpen(false);
+                }}
+              >
+                {exporting ? copy.apiProxy.chartExporting : (locale.startsWith("zh") ? "导出" : "Export")}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
-    </section>
+    </div>
   );
 }
 
@@ -1854,2025 +834,1588 @@ export function ApiProxyPanel({
 }: ApiProxyPanelProps) {
   const { copy, locale } = useI18n();
   const proxyCopy = copy.apiProxy;
-  const remoteAuthOptions = REMOTE_AUTH_OPTIONS.map((option) => ({
-    ...option,
-    label:
-      option.id === "keyContent"
-        ? proxyCopy.remoteAuthKeyContent
-        : option.id === "keyFile"
-          ? proxyCopy.remoteAuthKeyFile
-          : option.id === "keyPath"
-            ? proxyCopy.remoteAuthKeyPath
-            : proxyCopy.remoteAuthPassword,
-  }));
-  const busy = starting || stopping;
-  const codexProxyBindingBusy = bindingCodexProxy || restoringCodexProxy;
-  const cloudflaredBusy = installingCloudflared || startingCloudflared || stoppingCloudflared;
-  const apiProxyReasoningOptions = useMemo(
-    () => [
-      { id: "none", label: proxyCopy.reasoningNone },
-      { id: "minimal", label: proxyCopy.reasoningMinimal },
-      { id: "low", label: proxyCopy.reasoningLow },
-      { id: "medium", label: proxyCopy.reasoningMedium },
-      { id: "high", label: proxyCopy.reasoningHigh },
-      { id: "xhigh", label: proxyCopy.reasoningXHigh },
-      { id: "max", label: proxyCopy.reasoningMax },
-    ],
-    [
-      proxyCopy.reasoningHigh,
-      proxyCopy.reasoningLow,
-      proxyCopy.reasoningMax,
-      proxyCopy.reasoningMedium,
-      proxyCopy.reasoningMinimal,
-      proxyCopy.reasoningNone,
-      proxyCopy.reasoningXHigh,
-    ],
-  );
-  const apiProxyServiceTierOptions = useMemo(
-    () => [
-      { id: "auto", label: proxyCopy.serviceTierAuto },
-      { id: "default", label: proxyCopy.serviceTierDefault },
-      { id: "fast", label: proxyCopy.serviceTierFast },
-      { id: "flex", label: proxyCopy.serviceTierFlex },
-    ],
-    [
-      proxyCopy.serviceTierAuto,
-      proxyCopy.serviceTierDefault,
-      proxyCopy.serviceTierFast,
-      proxyCopy.serviceTierFlex,
-    ],
-  );
+
+  // 四个互斥主分区
+  const [activeTab, setActiveTab] = useState<ApiProxyTab>("status");
+
+  // 子页模式: null | "model-selection" | "new-key" | "key-detail" | "server-detail"
+  const [subpage, setSubpage] = useState<
+    null | "model-selection" | "new-key" | "key-detail" | "server-detail"
+  >(null);
+
+  // 远程子切换: "ssh" | "cloudflared"
+  const [remoteSubTab, setRemoteSubTab] = useState<"ssh" | "cloudflared">("ssh");
+
+  // 局域网地址展开折叠
+  const [lanExpanded, setLanExpanded] = useState(false);
+
+  // 控制器顶部更多菜单
+  const [topMoreMenuOpen, setTopMoreMenuOpen] = useState(false);
+  const topMoreMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // 端口草稿
   const [portDraft, setPortDraft] = useState<string | null>(null);
-  const [sequentialLimitDraft, setSequentialLimitDraft] = useState<number | null>(null);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [modelMenuSaving, setModelMenuSaving] = useState(false);
-  const [modelMenuDraft, setModelMenuDraft] = useState<string[]>(() =>
+  const portInput = portDraft ?? String(status.port ?? savedPort ?? DEFAULT_PROXY_PORT);
+  const effectivePort = useMemo(() => {
+    const raw = portInput.trim();
+    if (!raw) return 8787;
+    const num = Number(raw);
+    return Number.isInteger(num) && num >= 1 && num <= 65535 ? num : null;
+  }, [portInput]);
+
+  // 模型管理子页状态
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
+  const [modelDraft, setModelDraft] = useState<string[]>(() =>
     normalizeDisabledProxyModels(apiProxyDisabledModels, apiProxySupportedModels),
   );
-  const [modelSearchQuery, setModelSearchQuery] = useState("");
-  const [newApiProxyKeyLabel, setNewApiProxyKeyLabel] = useState("");
-  const [newApiProxyKeyValue, setNewApiProxyKeyValue] = useState("");
-  const [apiProxyKeyLabelDrafts, setApiProxyKeyLabelDrafts] = useState<Record<string, string>>({});
-  const [publicAccessEnabled, setPublicAccessEnabled] = useState(cloudflaredStatus.running);
-  const [tunnelMode, setTunnelMode] = useState<CloudflaredTunnelMode>(
-    cloudflaredStatus.tunnelMode ?? "quick",
-  );
-  const [useHttp2, setUseHttp2] = useState(cloudflaredStatus.useHttp2);
+  const [savingModels, setSavingModels] = useState(false);
+
+  // 同步外部模型配置到草稿
+  useEffect(() => {
+    if (subpage !== "model-selection") {
+      setModelDraft(normalizeDisabledProxyModels(apiProxyDisabledModels, apiProxySupportedModels));
+    }
+  }, [apiProxyDisabledModels, apiProxySupportedModels, subpage]);
+
+  // 密钥管理状态
+  const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  const [newKeyLabel, setNewKeyLabel] = useState("");
+  const [newKeyValue, setNewKeyValue] = useState("");
+  const [showSecretKey, setShowSecretKey] = useState(false);
+  const [keyAccordionOpen, setKeyAccordionOpen] = useState<"models" | "reasoning" | "tiers" | "logs" | null>(null);
+  const [deleteKeyConfirming, setDeleteKeyConfirming] = useState(false);
+  const [regenKeyConfirming, setRegenKeyConfirming] = useState(false);
+
+  // 远程服务器草稿与状态
   const [remoteDrafts, setRemoteDrafts] = useState<RemoteServerDraft[]>(() =>
     readCachedRemoteDrafts(remoteServers),
   );
   const [selectedRemoteId, setSelectedRemoteId] = useState<string | null>(() =>
     readCachedSelectedRemoteId(remoteServers),
   );
-  const [editingRemoteId, setEditingRemoteId] = useState<string | null>(() =>
-    readCachedEditingRemoteId(remoteServers),
-  );
-  const [diagnosticsRemoteId, setDiagnosticsRemoteId] = useState<string | null>(null);
   const [remoteHistory, setRemoteHistory] = useState<Record<string, number>>(() =>
     readCachedRemoteHistory(remoteServers),
   );
+  const [sshConfigExpanded, setSshConfigExpanded] = useState(false);
+  const [diagnosticsExpanded, setDiagnosticsExpanded] = useState(false);
+  const [deleteServerConfirming, setDeleteServerConfirming] = useState(false);
+
+  // Cloudflared 配置状态
+  const [tunnelMode, setTunnelMode] = useState<CloudflaredTunnelMode>(
+    cloudflaredStatus.tunnelMode ?? "quick",
+  );
+  const [useHttp2, setUseHttp2] = useState(cloudflaredStatus.useHttp2);
+  const [advancedNetworkOpen, setAdvancedNetworkOpen] = useState(false);
+  const [showTunnelSecrets, setShowTunnelSecrets] = useState(false);
   const [namedInput, setNamedInput] = useState({
     apiToken: "",
     accountId: "",
     zoneId: "",
     hostname: cloudflaredStatus.customHostname ?? "",
   });
-  const commitSequentialLimitRef = useRef<number | null>(null);
-  const cloudflaredEnabled = publicAccessEnabled || cloudflaredStatus.running;
 
-  const loadBalanceOptions = useMemo(
-    () => [
-      { id: "average" as const, label: proxyCopy.loadBalanceAverage },
-      { id: "sequential" as const, label: proxyCopy.loadBalanceSequential },
-    ],
-    [proxyCopy.loadBalanceAverage, proxyCopy.loadBalanceSequential],
-  );
-  const portInput = portDraft ?? String(status.port ?? savedPort ?? DEFAULT_PROXY_PORT);
-  const codexBindTitle = status.codexProxyBound
-    ? proxyCopy.codexBindBoundTitle
-    : proxyCopy.codexBindNormalTitle;
-  const canBindCodexProxy =
-    status.running &&
-    Boolean(status.baseUrl) &&
-    Boolean(status.apiKey) &&
-    !busy &&
-    !codexProxyBindingBusy;
-  const canRestoreCodexProxy =
-    status.codexProxyRestoreAvailable && !busy && !codexProxyBindingBusy;
-  const effectiveSequentialLimit = sequentialLimitDraft ?? sequentialFiveHourLimitPercent;
-  const effectiveDisabledModels = useMemo(
-    () => normalizeDisabledProxyModels(apiProxyDisabledModels, apiProxySupportedModels),
-    [apiProxyDisabledModels, apiProxySupportedModels],
-  );
-  const effectiveModelMenuDraft = useMemo(
-    () => normalizeDisabledProxyModels(modelMenuDraft, apiProxySupportedModels),
-    [apiProxySupportedModels, modelMenuDraft],
-  );
-  const enabledModelCount = apiProxySupportedModels.length - effectiveDisabledModels.length;
-  const hasModelMenuChanges =
-    effectiveDisabledModels.length !== effectiveModelMenuDraft.length ||
-    effectiveDisabledModels.some((model, index) => model !== effectiveModelMenuDraft[index]);
-  const normalizedModelSearchQuery = modelSearchQuery.trim().toLocaleLowerCase();
-  const filteredProxyModels = useMemo(
-    () =>
-      apiProxySupportedModels.filter((model) =>
-        normalizedModelSearchQuery === ""
-          ? true
-          : model.toLocaleLowerCase().includes(normalizedModelSearchQuery),
-      ),
-    [apiProxySupportedModels, normalizedModelSearchQuery],
-  );
+  const busy = starting || stopping;
+  const codexProxyBindingBusy = bindingCodexProxy || restoringCodexProxy;
+  const cloudflaredBusy = installingCloudflared || startingCloudflared || stoppingCloudflared;
 
   useEffect(() => {
-    if (modelMenuOpen) {
-      return;
-    }
-    // Keep the closed-menu draft synchronized with the persisted selection.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setModelMenuDraft(effectiveDisabledModels);
-  }, [effectiveDisabledModels, modelMenuOpen]);
+    writeStorageValue(REMOTE_DRAFTS_CACHE_KEY, JSON.stringify(remoteDrafts));
+  }, [remoteDrafts]);
 
   useEffect(() => {
-    if (!modelMenuOpen) {
-      // Closing the menu is the lifecycle boundary for its transient search.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setModelSearchQuery("");
-      return;
-    }
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !modelMenuSaving) {
-        setModelMenuOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [modelMenuOpen, modelMenuSaving]);
-
-  const handleToggleProxyModel = useCallback((model: string, enabled: boolean) => {
-    setModelMenuDraft((current) => {
-      const currentDisabled = normalizeDisabledProxyModels(current, apiProxySupportedModels);
-      if (enabled) {
-        return currentDisabled.filter((item) => item !== model);
-      }
-      if (currentDisabled.includes(model)) {
-        return currentDisabled;
-      }
-      return normalizeDisabledProxyModels([...currentDisabled, model], apiProxySupportedModels);
-    });
-  }, [apiProxySupportedModels]);
-
-  const handleSaveProxyModels = useCallback(async () => {
-    if (modelMenuSaving) {
-      return;
-    }
-    setModelMenuSaving(true);
-    try {
-      await onUpdateApiProxyDisabledModels(effectiveModelMenuDraft);
-      setModelMenuOpen(false);
-    } finally {
-      setModelMenuSaving(false);
-    }
-  }, [effectiveModelMenuDraft, modelMenuSaving, onUpdateApiProxyDisabledModels]);
-
-  const handleCreateApiProxyKey = useCallback(async () => {
-    await onCreateApiProxyKey({
-      label: newApiProxyKeyLabel.trim() || proxyCopy.keyCreateDefaultLabel,
-      key: newApiProxyKeyValue.trim() || null,
-      allowedModels: [],
-      allowedReasoningEfforts: [],
-      allowedServiceTiers: [],
-    });
-    setNewApiProxyKeyLabel("");
-    setNewApiProxyKeyValue("");
-  }, [
-    newApiProxyKeyLabel,
-    newApiProxyKeyValue,
-    onCreateApiProxyKey,
-    proxyCopy.keyCreateDefaultLabel,
-  ]);
-
-  const updateApiProxyKeyModels = useCallback(
-    (key: ApiProxyKey, model: string, enabled: boolean) => {
-      const currentModels =
-        key.allowedModels.length === 0 ? apiProxySupportedModels : key.allowedModels;
-      const nextModels = toggleStringValue(currentModels, model, enabled);
-      void onUpdateApiProxyKey({ id: key.id, allowedModels: nextModels });
-    },
-    [apiProxySupportedModels, onUpdateApiProxyKey],
-  );
-
-  const updateApiProxyKeyReasoning = useCallback(
-    (key: ApiProxyKey, effort: string, enabled: boolean) => {
-      const current =
-        key.allowedReasoningEfforts.length === 0
-          ? [...API_PROXY_REASONING_OPTION_IDS]
-          : key.allowedReasoningEfforts;
-      const next = toggleStringValue(current, effort, enabled);
-      void onUpdateApiProxyKey({ id: key.id, allowedReasoningEfforts: next });
-    },
-    [onUpdateApiProxyKey],
-  );
-
-  const updateApiProxyKeyServiceTier = useCallback(
-    (key: ApiProxyKey, tier: string, enabled: boolean) => {
-      const current =
-        key.allowedServiceTiers.length === 0
-          ? [...API_PROXY_SERVICE_TIER_OPTION_IDS]
-          : key.allowedServiceTiers;
-      const next = toggleStringValue(current, tier, enabled);
-      void onUpdateApiProxyKey({ id: key.id, allowedServiceTiers: next });
-    },
-    [onUpdateApiProxyKey],
-  );
-
-  const commitApiProxyKeyLabel = useCallback(
-    (key: ApiProxyKey) => {
-      const nextLabel = (apiProxyKeyLabelDrafts[key.id] ?? key.label).trim();
-      if (!nextLabel) {
-        setApiProxyKeyLabelDrafts((drafts) => ({ ...drafts, [key.id]: key.label }));
-        return;
-      }
-
-      setApiProxyKeyLabelDrafts((drafts) => ({ ...drafts, [key.id]: nextLabel }));
-      if (nextLabel !== key.label) {
-        void onUpdateApiProxyKey({ id: key.id, label: nextLabel });
-      }
-    },
-    [apiProxyKeyLabelDrafts, onUpdateApiProxyKey],
-  );
-
-  const effectiveRemoteDrafts =
-    remoteDrafts.length === 0 && remoteServers.length > 0
-      ? remoteServers.map(configToDraft)
-      : remoteDrafts;
-
-  useEffect(() => {
-    writeStorageValue(REMOTE_DRAFTS_CACHE_KEY, JSON.stringify(effectiveRemoteDrafts));
-  }, [effectiveRemoteDrafts]);
-
-  useEffect(() => {
-    const resolvedEditingRemoteId =
-      editingRemoteId && effectiveRemoteDrafts.some((draft) => draft.id === editingRemoteId)
-        ? editingRemoteId
-        : null;
-    writeStorageValue(REMOTE_EXPANDED_CACHE_KEY, resolvedEditingRemoteId);
-  }, [effectiveRemoteDrafts, editingRemoteId]);
-
-  useEffect(() => {
-    const resolvedSelectedRemoteId =
-      selectedRemoteId && effectiveRemoteDrafts.some((draft) => draft.id === selectedRemoteId)
-        ? selectedRemoteId
-        : effectiveRemoteDrafts[0]?.id ?? null;
-    writeStorageValue(REMOTE_SELECTED_CACHE_KEY, resolvedSelectedRemoteId, "local");
-  }, [effectiveRemoteDrafts, selectedRemoteId]);
+    writeStorageValue(REMOTE_SELECTED_CACHE_KEY, selectedRemoteId, "local");
+  }, [selectedRemoteId]);
 
   useEffect(() => {
     writeStorageValue(REMOTE_HISTORY_CACHE_KEY, JSON.stringify(remoteHistory), "local");
   }, [remoteHistory]);
 
-  const rawPort = portInput.trim();
-  const effectivePort = !rawPort
-    ? 8787
-    : Number.isInteger(Number(rawPort)) && Number(rawPort) >= 1 && Number(rawPort) <= 65535
-      ? Number(rawPort)
-      : null;
-  const hasRemoteServers = effectiveRemoteDrafts.length > 0;
-  const resolvedSelectedRemoteId =
-    selectedRemoteId && effectiveRemoteDrafts.some((draft) => draft.id === selectedRemoteId)
-      ? selectedRemoteId
-      : effectiveRemoteDrafts[0]?.id ?? null;
-  const selectedRemoteDraft =
-    resolvedSelectedRemoteId === null
-      ? null
-      : effectiveRemoteDrafts.find((draft) => draft.id === resolvedSelectedRemoteId) ?? null;
-  const selectedRemoteConfig = selectedRemoteDraft ? draftToConfig(selectedRemoteDraft) : null;
-  const selectedRemoteStatus = selectedRemoteDraft ? remoteStatuses[selectedRemoteDraft.id] : null;
-  const selectedRemoteLog = selectedRemoteDraft ? remoteLogs[selectedRemoteDraft.id] : undefined;
-  const selectedRemoteConfigured = selectedRemoteDraft
-    ? isRemoteDraftConfigured(selectedRemoteDraft)
-    : false;
-  const selectedRemoteIdentity = selectedRemoteDraft
-    ? selectedRemoteDraft.label.trim() || selectedRemoteDraft.host.trim() || proxyCopy.remoteTitle
-    : proxyCopy.remoteTitle;
-  const selectedRefreshing =
-    selectedRemoteDraft !== null && refreshingRemoteId === selectedRemoteDraft.id;
-  const selectedDeploying =
-    selectedRemoteDraft !== null && deployingRemoteId === selectedRemoteDraft.id;
-  const selectedStarting =
-    selectedRemoteDraft !== null && startingRemoteId === selectedRemoteDraft.id;
-  const selectedStopping =
-    selectedRemoteDraft !== null && stoppingRemoteId === selectedRemoteDraft.id;
-  const selectedReadingLogs =
-    selectedRemoteDraft !== null && readingRemoteLogsId === selectedRemoteDraft.id;
-  const selectedInstallingDependency =
-    selectedRemoteDraft !== null &&
-    installingDependencyName === "sshpass" &&
-    installingDependencyTargetId === selectedRemoteDraft.id;
-  const selectedRemoteBusy =
-    selectedRefreshing ||
-    selectedDeploying ||
-    selectedStarting ||
-    selectedStopping ||
-    selectedInstallingDependency;
-  const selectedRemoteLastChecked =
-    selectedRemoteDraft !== null ? remoteHistory[selectedRemoteDraft.id] ?? 0 : 0;
-  const selectedRemoteCheckedLabel =
-    selectedRemoteLastChecked > 0
-      ? formatRemoteHistoryTime(locale, selectedRemoteLastChecked)
-      : proxyCopy.remoteNeverChecked;
-  const editingSelectedRemote =
-    selectedRemoteDraft !== null && editingRemoteId === selectedRemoteDraft.id;
-  const diagnosticsOpen =
-    selectedRemoteDraft !== null && diagnosticsRemoteId === selectedRemoteDraft.id;
-  const selectedRemoteRunningText = selectedRemoteStatus
-    ? selectedRemoteStatus.running
-      ? proxyCopy.statusRunning
-      : proxyCopy.statusStopped
-    : proxyCopy.remoteStatusUnknown;
-  const selectedRemoteInstalledText = selectedRemoteStatus
-    ? selectedRemoteStatus.installed
-      ? proxyCopy.remoteInstalledYes
-      : proxyCopy.remoteInstalledNo
-    : proxyCopy.remoteStatusUnknown;
-  const selectedRemoteSystemdText = selectedRemoteStatus
-    ? selectedRemoteStatus.serviceInstalled
-      ? proxyCopy.remoteInstalledYes
-      : proxyCopy.remoteInstalledNo
-    : proxyCopy.remoteStatusUnknown;
-  const selectedRemoteEnabledText = selectedRemoteStatus
-    ? selectedRemoteStatus.enabled
-      ? proxyCopy.remoteInstalledYes
-      : proxyCopy.remoteInstalledNo
-    : proxyCopy.remoteStatusUnknown;
-  const remoteOrder = Object.fromEntries(
-    effectiveRemoteDrafts.map((draft, index) => [draft.id, index]),
-  );
-  const orderedRemoteDrafts = [...effectiveRemoteDrafts].sort((left, right) => {
-    const historyDelta = (remoteHistory[right.id] ?? 0) - (remoteHistory[left.id] ?? 0);
-    if (historyDelta !== 0) {
-      return historyDelta;
-    }
-    return (remoteOrder[left.id] ?? 0) - (remoteOrder[right.id] ?? 0);
-  });
+  // Esc 返回上一层
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (topMoreMenuOpen) {
+          setTopMoreMenuOpen(false);
+        } else if (subpage !== null) {
+          setSubpage(null);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [topMoreMenuOpen, subpage]);
 
-  const namedReady =
-    namedInput.apiToken.trim() !== "" &&
-    namedInput.accountId.trim() !== "" &&
-    namedInput.zoneId.trim() !== "" &&
-    namedInput.hostname.trim() !== "";
+  // 点击外部关闭顶部菜单
+  useEffect(() => {
+    if (!topMoreMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (topMoreMenuRef.current && !topMoreMenuRef.current.contains(e.target as Node)) {
+        setTopMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handleClick);
+    return () => window.removeEventListener("mousedown", handleClick);
+  }, [topMoreMenuOpen]);
 
-  const canStartCloudflared =
-    status.running &&
-    status.port !== null &&
-    cloudflaredStatus.installed &&
-    !cloudflaredBusy &&
-    (tunnelMode === "quick" || namedReady);
+  // 本地服务端口保存
+  const persistPortIfNeeded = async () => {
+    if (effectivePort === null || effectivePort === savedPort) return;
+    await onPersistPort(effectivePort);
+  };
 
-  const cloudflaredInput: StartCloudflaredTunnelInput | null =
-    status.port === null
-      ? null
-      : {
-          apiProxyPort: status.port,
-          useHttp2,
-          mode: tunnelMode,
-          named:
-            tunnelMode === "named"
-              ? {
-                  apiToken: namedInput.apiToken.trim(),
-                  accountId: namedInput.accountId.trim(),
-                  zoneId: namedInput.zoneId.trim(),
-                  hostname: namedInput.hostname.trim(),
-                }
-              : null,
-        };
+  const handleStart = async () => {
+    await persistPortIfNeeded();
+    await onStart(effectivePort);
+    setPortDraft(null);
+  };
+
+  const enabledModelCount = apiProxySupportedModels.length - apiProxyDisabledModels.length;
+
+  // 远程同步
+  const effectiveRemoteDrafts =
+    remoteDrafts.length === 0 && remoteServers.length > 0
+      ? remoteServers.map(configToDraft)
+      : remoteDrafts;
 
   const persistRemoteDrafts = (drafts: RemoteServerDraft[]) => {
     onUpdateRemoteServers(drafts.map(draftToConfig));
   };
 
-  const persistPortIfNeeded = async (explicitPort?: number | null) => {
-    const nextPort = explicitPort ?? effectivePort;
-    if (nextPort === null || nextPort === savedPort) {
-      return;
-    }
-    await onPersistPort(nextPort);
-  };
+  const targetRemoteDraft =
+    effectiveRemoteDrafts.find((d) => d.id === selectedRemoteId) ?? effectiveRemoteDrafts[0] ?? null;
+  const targetRemoteStatus = targetRemoteDraft ? remoteStatuses[targetRemoteDraft.id] : null;
+  const targetRemoteLog = targetRemoteDraft ? remoteLogs[targetRemoteDraft.id] : "";
 
-  const commitSequentialLimit = useCallback(
-    (value: number) => {
-      const nextValue = Math.min(100, Math.max(0, Math.round(value)));
-      if (
-        nextValue === sequentialFiveHourLimitPercent ||
-        commitSequentialLimitRef.current === nextValue
-      ) {
-        setSequentialLimitDraft(null);
-        return;
-      }
-
-      commitSequentialLimitRef.current = nextValue;
-      void Promise.resolve(onUpdateSequentialFiveHourLimitPercent(nextValue)).finally(() => {
-        commitSequentialLimitRef.current = null;
-        setSequentialLimitDraft(null);
-      });
-    },
-    [onUpdateSequentialFiveHourLimitPercent, sequentialFiveHourLimitPercent],
-  );
-
-  const handleStart = async () => {
-    await persistPortIfNeeded(effectivePort);
-    await onStart(effectivePort);
-    setPortDraft(null);
-  };
-
-  const updateRemoteDraft = (
-    id: string,
-    key: keyof Omit<RemoteServerDraft, "id">,
-    value: string | RemoteAuthMode,
-  ) => {
-    setRemoteDrafts((current) =>
-      (current.length === 0 && remoteServers.length > 0 ? remoteServers.map(configToDraft) : current).map((draft) => {
-        if (draft.id !== id) {
-          return draft;
-        }
-        const next = { ...draft, [key]: value } as RemoteServerDraft;
-        if (key === "authMode") {
-          if (value !== "keyContent") {
-            next.privateKey = "";
-          }
-          if (value !== "password") {
-            next.password = "";
-          }
-          if (value === "keyContent" || value === "password") {
-            next.identityFile = "";
-          }
-        }
-        return next;
-      }),
+  // 渲染子页: 模型选择
+  if (subpage === "model-selection") {
+    const query = modelSearchQuery.trim().toLowerCase();
+    const filteredModels = apiProxySupportedModels.filter((m) =>
+      query === "" ? true : m.toLowerCase().includes(query),
     );
-  };
 
-  const addRemoteDraft = () => {
-    const nextDraft = createRemoteDraft();
-    setRemoteDrafts((current) => [
-      ...(current.length === 0 && remoteServers.length > 0 ? remoteServers.map(configToDraft) : current),
-      nextDraft,
-    ]);
-    setSelectedRemoteId(nextDraft.id);
-    setEditingRemoteId(nextDraft.id);
-    setDiagnosticsRemoteId(null);
-  };
+    const handleToggleAll = (enable: boolean) => {
+      setModelDraft(enable ? [] : [...apiProxySupportedModels]);
+    };
 
-  const removeRemoteDraft = (id: string) => {
-    const next = effectiveRemoteDrafts.filter((draft) => draft.id !== id);
-    setRemoteDrafts(next);
-    persistRemoteDrafts(next);
-    setSelectedRemoteId((current) => (current === id ? next[0]?.id ?? null : current));
-    setEditingRemoteId((current) => (current === id ? null : current));
-    setDiagnosticsRemoteId((current) => (current === id ? null : current));
-    setRemoteHistory((current) => {
-      if (!(id in current)) {
-        return current;
+    const handleToggleModel = (m: string) => {
+      setModelDraft((curr) =>
+        curr.includes(m) ? curr.filter((item) => item !== m) : [...curr, m],
+      );
+    };
+
+    const handleSaveModels = async () => {
+      setSavingModels(true);
+      try {
+        await onUpdateApiProxyDisabledModels(modelDraft);
+        setSubpage(null);
+      } finally {
+        setSavingModels(false);
       }
-      const nextHistory = { ...current };
-      delete nextHistory[id];
-      return nextHistory;
-    });
-  };
+    };
 
-  const selectRemoteDraft = (id: string) => {
-    setSelectedRemoteId(id);
-    setDiagnosticsRemoteId(null);
-    setRemoteHistory((current) => ({ ...current, [id]: Date.now() }));
+    return (
+      <section className="compactProxyPage">
+        <div className="compactSubpageHeader">
+          <button type="button" className="compactBackButton" onClick={() => setSubpage(null)}>
+            ‹ {locale.startsWith("zh") ? "返回状态" : "Back"}
+          </button>
+          <h3>{proxyCopy.modelMenuTitle}</h3>
+        </div>
 
-    const targetDraft = effectiveRemoteDrafts.find((draft) => draft.id === id);
-    if (!targetDraft) {
-      return;
-    }
+        <div className="compactSubpageBody">
+          <input
+            className="compactSearchInput"
+            value={modelSearchQuery}
+            placeholder={proxyCopy.modelMenuSearchPlaceholder}
+            onChange={(e) => setModelSearchQuery(e.target.value)}
+          />
 
-    if (!isRemoteDraftConfigured(targetDraft)) {
-      setEditingRemoteId(id);
-      return;
-    }
-
-    onRefreshRemoteStatus(draftToConfig(targetDraft));
-  };
-
-  const toggleSelectedDiagnostics = () => {
-    if (!selectedRemoteDraft) {
-      return;
-    }
-
-    const nextOpenId = diagnosticsOpen ? null : selectedRemoteDraft.id;
-    setDiagnosticsRemoteId(nextOpenId);
-
-    if (
-      nextOpenId &&
-      selectedRemoteConfigured &&
-      selectedRemoteConfig &&
-      !remoteLogs[selectedRemoteDraft.id] &&
-      !selectedReadingLogs
-    ) {
-      onReadRemoteLogs(selectedRemoteConfig);
-    }
-  };
-
-  let remoteGuideTitle = proxyCopy.remoteStatusUnknown;
-  let remoteGuideDescription = proxyCopy.remoteDescription;
-
-  if (selectedRemoteDraft && !selectedRemoteConfigured) {
-    remoteGuideTitle = proxyCopy.remoteGuideSetupTitle;
-    remoteGuideDescription = proxyCopy.remoteGuideSetupDescription;
-  } else if (selectedRefreshing) {
-    remoteGuideTitle = proxyCopy.remoteRefreshing;
-    remoteGuideDescription = proxyCopy.remoteDescription;
-  } else if (selectedRemoteStatus?.running) {
-    remoteGuideTitle = proxyCopy.remoteGuideReadyTitle;
-    remoteGuideDescription = proxyCopy.remoteGuideReadyDescription;
-  } else if (selectedRemoteStatus?.installed) {
-    remoteGuideTitle = proxyCopy.remoteGuideStartTitle;
-    remoteGuideDescription = proxyCopy.remoteGuideStartDescription;
-  } else if (selectedRemoteDraft && selectedRemoteConfigured) {
-    remoteGuideTitle = proxyCopy.remoteGuideDeployTitle;
-    remoteGuideDescription = proxyCopy.remoteGuideDeployDescription;
-  }
-
-  return (
-    <section className="proxyPage">
-      <div className="proxyShell">
-        <section className="proxySectionCard proxySectionCardPrimary proxyLocalControlCard">
-          <div className="proxyHeaderStats">
-            <span className="proxyHeaderStat">
-              <span className={`proxyStatusDot${status.running ? " isRunning" : ""}`} aria-hidden="true" />
-              <span>{proxyCopy.statusLabel}</span>
-              <strong>{status.running ? proxyCopy.statusRunning : proxyCopy.statusStopped}</strong>
-            </span>
-            <span className="proxyHeaderStat">
-              <span>{proxyCopy.portLabel}</span>
-              <strong>{status.port ?? "--"}</strong>
-            </span>
-            <span className="proxyHeaderStat">
-              <span>{proxyCopy.accountCountLabel}</span>
-              <strong>{accountCount}</strong>
-            </span>
-          </div>
-
-          <div className="proxyControlRow">
-            <label className="proxyCompactField">
-              <span>{proxyCopy.portLabel}</span>
-              <input
-                className="proxyPortInput"
-                inputMode="numeric"
-                aria-label={proxyCopy.portInputAriaLabel}
-                placeholder={DEFAULT_PROXY_PORT}
-                value={portInput}
-                onChange={(event) => setPortDraft(event.target.value)}
-                onBlur={() => {
-                  void (async () => {
-                    await persistPortIfNeeded();
-                    if (effectivePort !== null) {
-                      setPortDraft(null);
-                    }
-                  })();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.currentTarget.blur();
-                  }
-                }}
-                disabled={busy || status.running}
-              />
-            </label>
-
-            <div className="proxySwitchRow proxyInlineSetting">
-              <div className="settingMeta">
-                <strong>{proxyCopy.defaultStartLabel}</strong>
-              </div>
-              <label className="themeSwitch" aria-label={proxyCopy.defaultStartLabel}>
-                <input
-                  type="checkbox"
-                  checked={autoStartEnabled}
-                  disabled={savingSettings}
-                  onChange={(event) => onToggleAutoStart(event.target.checked)}
-                />
-                <span className="themeSwitchTrack" aria-hidden="true">
-                  <span className="themeSwitchThumb" />
-                </span>
-                <span className="themeSwitchText">
-                  {autoStartEnabled
-                    ? proxyCopy.defaultStartEnabled
-                    : proxyCopy.defaultStartDisabled}
-                </span>
-              </label>
-            </div>
-
-            <div className="proxyControlActions">
-              <button className="ghost" onClick={onRefresh} disabled={busy}>
-                {proxyCopy.refreshStatus}
-              </button>
-              {status.running ? (
-                <button className="danger" onClick={onStop} disabled={busy}>
-                  {stopping ? proxyCopy.stopping : proxyCopy.stop}
-                </button>
-              ) : (
-                <button
-                  className="primary"
-                  onClick={() => {
-                    void handleStart();
-                  }}
-                  disabled={busy || accountCount === 0 || effectivePort === null}
-                >
-                  {starting ? proxyCopy.starting : proxyCopy.start}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <article className="proxyDetailCard proxyEndpointCard">
-            <span className="proxyLabel">{proxyCopy.baseUrlLabel}</span>
-            <div className="proxyEndpointList">
-              <div className="proxyEndpointRow">
-                <div className="proxyEndpointMeta">
-                  <span>{proxyCopy.localBaseUrlLabel}</span>
-                  <code>{status.baseUrl ?? proxyCopy.baseUrlPlaceholder}</code>
-                </div>
-                <button
-                  className="ghost proxyCopyButton"
-                  onClick={() => copyText(status.baseUrl)}
-                  disabled={!status.baseUrl}
-                >
-                  {proxyCopy.copy}
-                </button>
-              </div>
-
-              {status.lanBaseUrl ? (
-                <div className="proxyEndpointRow">
-                  <div className="proxyEndpointMeta">
-                    <span>{proxyCopy.lanBaseUrlLabel}</span>
-                    <code>{status.lanBaseUrl}</code>
-                  </div>
-                  <button
-                    className="ghost proxyCopyButton"
-                    onClick={() => copyText(status.lanBaseUrl)}
-                    disabled={!status.lanBaseUrl}
-                  >
-                    {proxyCopy.copy}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </article>
-
-          <article className={`proxyDetailCard proxyCodexBindCard${status.codexProxyBound ? " isBound" : ""}`}>
-            <div className="proxyDetailHeader">
-              <div className="proxyCodexBindMeta">
-                <span className="proxyLabel">{proxyCopy.codexBindLabel}</span>
-                <strong>{codexBindTitle}</strong>
-              </div>
-              <div className="proxyDetailActions">
-                <button
-                  type="button"
-                  className="ghost proxyCopyButton"
-                  disabled={!canRestoreCodexProxy}
-                  onClick={onRestoreCodexProxy}
-                >
-                  {restoringCodexProxy
-                    ? proxyCopy.codexRestoreActionBusy
-                    : proxyCopy.codexRestoreAction}
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={!canBindCodexProxy || status.codexProxyBound}
-                  onClick={onBindCodexProxy}
-                >
-                  {bindingCodexProxy ? proxyCopy.codexBindActionBusy : proxyCopy.codexBindAction}
-                </button>
-              </div>
-            </div>
-            <div className="proxyEndpointList">
-              <div className="proxyEndpointRow">
-                <div className="proxyEndpointMeta">
-                  <span>{proxyCopy.codexBindCurrentBaseUrlLabel}</span>
-                  <code>{status.codexProxyBaseUrl ?? proxyCopy.none}</code>
-                </div>
-                <button
-                  className="ghost proxyCopyButton"
-                  onClick={() => copyText(status.codexProxyBaseUrl)}
-                  disabled={!status.codexProxyBaseUrl}
-                >
-                  {proxyCopy.copy}
-                </button>
-              </div>
-            </div>
-          </article>
-        </section>
-
-        <ApiProxyUsageChart
-          copy={proxyCopy}
-          locale={locale}
-          stats={apiProxyUsageStats}
-          range={apiProxyUsageRange}
-          metric={apiProxyUsageMetric}
-          loading={apiProxyUsageLoading}
-          clearing={apiProxyUsageClearing}
-          exporting={apiProxyUsageExporting}
-          proxyRunning={status.running}
-          apiProxyKeys={apiProxyKeys}
-          onSelectRange={onSelectApiProxyUsageRange}
-          onSelectMetric={onSelectApiProxyUsageMetric}
-          onExport={onExportApiProxyUsage}
-          onClear={onClearApiProxyUsageStats}
-        />
-
-        <section className="proxySectionCard proxyProxySettingsCard">
-          <article className="proxyDetailCard proxyBalanceCard">
-            <div className="proxyBalanceHeader">
-              <span className="proxyLabel">{proxyCopy.loadBalanceLabel}</span>
-              <EditorMultiSelect
-                className="proxyModePicker"
-                options={loadBalanceOptions}
-                value={loadBalanceMode}
-                ariaLabel={proxyCopy.loadBalanceLabel}
-                placeholder={proxyCopy.loadBalanceLabel}
-                disabled={savingSettings}
-                onChange={(mode) => {
-                  void onUpdateLoadBalanceMode(mode);
-                }}
-              />
-            </div>
-
-            {loadBalanceMode === "sequential" ? (
-              <div className="proxySequentialLimit">
-                <div className="proxySequentialLimitHeader">
-                  <span className="proxyInlineLabel">{proxyCopy.sequentialFiveHourLimitLabel}</span>
-                  <strong>{effectiveSequentialLimit}%</strong>
-                </div>
-                <input
-                  className="proxyRangeInput"
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={effectiveSequentialLimit}
-                  disabled={savingSettings}
-                  aria-label={proxyCopy.sequentialFiveHourLimitLabel}
-                  aria-valuetext={`${effectiveSequentialLimit}%`}
-                  onChange={(event) => {
-                    setSequentialLimitDraft(Number(event.currentTarget.value));
-                  }}
-                  onPointerUp={(event) => {
-                    commitSequentialLimit(Number(event.currentTarget.value));
-                  }}
-                  onBlur={(event) => {
-                    commitSequentialLimit(Number(event.currentTarget.value));
-                  }}
-                />
-                <p>{proxyCopy.sequentialFiveHourLimitDescription}</p>
-              </div>
-            ) : null}
-
-          </article>
-
-          <article className="proxyDetailCard proxyModelCard">
-            <div className="proxyModelCardHeader">
-              <div className="proxyModelCardCopy">
-                <span className="proxyLabel">{proxyCopy.modelMenuLabel}</span>
-                <strong>{enabledModelCount}/{apiProxySupportedModels.length || 0}</strong>
-                <p>{proxyCopy.modelMenuDescription}</p>
-              </div>
-              <button
-                type="button"
-                className="ghost proxySubmenuTrigger"
-                disabled={savingSettings || apiProxySupportedModels.length === 0}
-                onClick={() => setModelMenuOpen(true)}
-              >
-                <span>{proxyCopy.modelMenuOpen}</span>
-              </button>
-            </div>
-          </article>
-
-          <div className="proxyDetailGrid">
-            <article className="proxyDetailCard">
-              <div className="proxyDetailHeader">
-                <span className="proxyLabel">{proxyCopy.apiKeyLabel}</span>
-                <div className="proxyDetailActions">
-                  <button
-                    className="ghost proxyCopyButton"
-                    onClick={onRefreshApiKey}
-                    disabled={refreshingApiKey}
-                  >
-                    {refreshingApiKey ? proxyCopy.refreshingKey : proxyCopy.refreshKey}
-                  </button>
-                  <button
-                    className="ghost proxyCopyButton"
-                    onClick={() => copyText(status.apiKey)}
-                    disabled={!status.apiKey}
-                  >
-                    {proxyCopy.copy}
-                  </button>
-                </div>
-              </div>
-              <code>{status.apiKey ?? proxyCopy.apiKeyPlaceholder}</code>
-            </article>
-
-            <article className="proxyDetailCard">
-              <span className="proxyLabel">{proxyCopy.activeAccountLabel}</span>
-              <strong>{status.activeAccountLabel ?? proxyCopy.activeAccountEmptyTitle}</strong>
-              <p>{status.activeAccountId ?? proxyCopy.activeAccountEmptyDescription}</p>
-            </article>
-
-            <article className="proxyDetailCard">
-              <span className="proxyLabel">{proxyCopy.lastErrorLabel}</span>
-              <p className="proxyErrorText">{status.lastError ?? proxyCopy.none}</p>
-            </article>
-          </div>
-
-          <article className="proxyDetailCard proxyKeyManagerCard">
-            <div className="proxyKeyManagerHeader">
-              <div className="proxyKeyManagerIntro">
-                <div className="proxyKeyTitleRow">
-                  <span className="proxyLabel">{proxyCopy.keyManagerTitle}</span>
-                  <ProxyHelpTip label={proxyCopy.keyManagerHelpLabel}>
-                    {proxyCopy.keyManagerHelp}
-                  </ProxyHelpTip>
-                </div>
-                <strong>{apiProxyKeys.length}</strong>
-                <p>{proxyCopy.keyManagerDescription}</p>
-              </div>
-              <div className="proxyKeyCreateRow">
-                <input
-                  className="proxyKeyInput"
-                  value={newApiProxyKeyLabel}
-                  onChange={(event) => setNewApiProxyKeyLabel(event.currentTarget.value)}
-                  placeholder={proxyCopy.keyCreateNamePlaceholder}
-                  disabled={savingApiProxyKey}
-                />
-                <input
-                  className="proxyKeyInput proxyKeySecretInput"
-                  value={newApiProxyKeyValue}
-                  onChange={(event) => setNewApiProxyKeyValue(event.currentTarget.value)}
-                  placeholder={proxyCopy.keyCreateSecretPlaceholder}
-                  disabled={savingApiProxyKey}
-                />
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={savingApiProxyKey}
-                  onClick={() => void handleCreateApiProxyKey()}
-                >
-                  {proxyCopy.keyCreateAction}
-                </button>
-              </div>
-            </div>
-
-            {apiProxyKeysLoading ? (
-              <div className="proxyModelEmptyState">{proxyCopy.keyLoading}</div>
-            ) : apiProxyKeys.length === 0 ? (
-              <div className="proxyModelEmptyState">{proxyCopy.keyEmpty}</div>
-            ) : (
-              <div className="proxyKeyList">
-                {apiProxyKeys.map((key) => {
-                  const summary = summarizeApiProxyKeyLogs(apiProxyKeyLogs, key.id);
-                  const recentLogs = apiProxyKeyLogs
-                    .filter((log) => log.keyId === key.id)
-                    .slice(0, 4);
-                  const boundModels =
-                    key.allowedModels.length === 0 ? apiProxySupportedModels : key.allowedModels;
-                  return (
-                    <section key={key.id} className="proxyKeyItem">
-                      <div className="proxyKeyItemHeader">
-                        <label className="proxyKeyNameField">
-                          <span>{proxyCopy.keyNameLabel}</span>
-                          <input
-                            className="proxyKeyInput"
-                            value={apiProxyKeyLabelDrafts[key.id] ?? key.label}
-                            disabled={savingApiProxyKey}
-                            onChange={(event) => {
-                              const value = event.currentTarget.value;
-                              setApiProxyKeyLabelDrafts((drafts) => ({
-                                ...drafts,
-                                [key.id]: value,
-                              }));
-                            }}
-                            onBlur={() => commitApiProxyKeyLabel(key)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.currentTarget.blur();
-                              }
-                              if (event.key === "Escape") {
-                                setApiProxyKeyLabelDrafts((drafts) => ({
-                                  ...drafts,
-                                  [key.id]: key.label,
-                                }));
-                                event.currentTarget.blur();
-                              }
-                            }}
-                          />
-                        </label>
-                        <label className="themeSwitch" aria-label={proxyCopy.keyToggleAria}>
-                          <input
-                            type="checkbox"
-                            checked={key.enabled}
-                            disabled={savingApiProxyKey}
-                            onChange={(event) =>
-                              void onUpdateApiProxyKey({
-                                id: key.id,
-                                enabled: event.currentTarget.checked,
-                              })
-                            }
-                          />
-                          <span className="themeSwitchTrack" aria-hidden="true">
-                            <span className="themeSwitchThumb" />
-                          </span>
-                          <span className="themeSwitchText">
-                            {key.enabled ? proxyCopy.keyEnabled : proxyCopy.keyDisabled}
-                          </span>
-                        </label>
-                        <button
-                          type="button"
-                          className="ghost proxyCopyButton"
-                          disabled={savingApiProxyKey}
-                          onClick={() => void onRegenerateApiProxyKey(key.id)}
-                        >
-                          {proxyCopy.keyRegenerate}
-                        </button>
-                        <button
-                          type="button"
-                          className="danger"
-                          disabled={savingApiProxyKey || apiProxyKeys.length <= 1}
-                          onClick={() => void onDeleteApiProxyKey(key.id)}
-                        >
-                          {proxyCopy.keyDelete}
-                        </button>
-                      </div>
-
-                      <div className="proxyKeySecretRow">
-                        <span className="proxyInlineLabel">{proxyCopy.keySecretLabel}</span>
-                        <code>{key.key}</code>
-                        <button
-                          type="button"
-                          className="ghost proxyCopyButton"
-                          onClick={() => copyText(key.key)}
-                        >
-                          {proxyCopy.copy}
-                        </button>
-                      </div>
-
-                      <div className="proxyKeySummaryGrid">
-                        <span><strong>{summary.calls}</strong>{proxyCopy.keyCallsLabel}</span>
-                        <span><strong>{summary.tokens}</strong>{proxyCopy.keyTokensLabel}</span>
-                        <span>
-                          <strong>{formatApiProxyKeyLogTime(locale, summary.lastUsedAt)}</strong>
-                          {proxyCopy.keyLastUsedLabel}
-                        </span>
-                      </div>
-
-                      <div className="proxyKeyBindingBlock">
-                        <div className="proxySectionTitleWithHelp">
-                          <span className="proxyInlineLabel">{proxyCopy.keyModelsLabel}</span>
-                          <ProxyHelpTip label={proxyCopy.keyModelsHelpLabel}>
-                            {proxyCopy.keyModelsHelp}
-                          </ProxyHelpTip>
-                        </div>
-                        <div className="proxyKeyChipList">
-                          {apiProxySupportedModels.map((model) => (
-                            <label key={model} className="proxyKeyChip">
-                              <input
-                                type="checkbox"
-                                checked={boundModels.includes(model)}
-                                disabled={savingApiProxyKey}
-                                onChange={(event) =>
-                                  updateApiProxyKeyModels(key, model, event.currentTarget.checked)
-                                }
-                              />
-                              <span>{model}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="proxyKeyBindingColumns">
-                        <div className="proxyKeyBindingBlock">
-                          <div className="proxySectionTitleWithHelp">
-                            <span className="proxyInlineLabel">{proxyCopy.keyReasoningLabel}</span>
-                            <ProxyHelpTip label={proxyCopy.keyReasoningHelpLabel}>
-                              {proxyCopy.keyReasoningHelp}
-                            </ProxyHelpTip>
-                          </div>
-                          <div className="proxyKeyChipList">
-                            {apiProxyReasoningOptions.map((option) => (
-                              <label key={option.id} className="proxyKeyChip">
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    key.allowedReasoningEfforts.length === 0 ||
-                                    key.allowedReasoningEfforts.includes(option.id)
-                                  }
-                                  disabled={savingApiProxyKey}
-                                  onChange={(event) =>
-                                    updateApiProxyKeyReasoning(
-                                      key,
-                                      option.id,
-                                      event.currentTarget.checked,
-                                    )
-                                  }
-                                />
-                                <span>{option.label}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="proxyKeyBindingBlock">
-                          <div className="proxySectionTitleWithHelp">
-                            <span className="proxyInlineLabel">{proxyCopy.keyServiceTierLabel}</span>
-                            <ProxyHelpTip label={proxyCopy.keyServiceTierHelpLabel}>
-                              {proxyCopy.keyServiceTierHelp}
-                            </ProxyHelpTip>
-                          </div>
-                          <div className="proxyKeyChipList">
-                            {apiProxyServiceTierOptions.map((option) => (
-                              <label key={option.id} className="proxyKeyChip">
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    key.allowedServiceTiers.length === 0 ||
-                                    key.allowedServiceTiers.includes(option.id)
-                                  }
-                                  disabled={savingApiProxyKey}
-                                  onChange={(event) =>
-                                    updateApiProxyKeyServiceTier(
-                                      key,
-                                      option.id,
-                                      event.currentTarget.checked,
-                                    )
-                                  }
-                                />
-                                <span>{option.label}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="proxyKeyLogs">
-                        <span className="proxyInlineLabel">{proxyCopy.keyLogsLabel}</span>
-                        {recentLogs.length === 0 ? (
-                          <p>{proxyCopy.keyNoLogs}</p>
-                        ) : (
-                          recentLogs.map((log) => (
-                            <div key={`${log.timestamp}-${log.route}-${log.model}-${log.calls}-${log.tokens}`} className="proxyKeyLogRow">
-                              <span>{formatApiProxyKeyLogTime(locale, log.timestamp)}</span>
-                              <strong>{log.model}</strong>
-                              <span>{log.route ?? "--"}</span>
-                              <span>
-                                {log.reasoningEffort ?? "--"} / {log.serviceTier ?? "--"}
-                              </span>
-                              <span>
-                                {log.calls} {proxyCopy.keyCallsLabel}, {log.tokens}{" "}
-                                {proxyCopy.keyTokensLabel}
-                              </span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-
-          {modelMenuOpen
-            ? createPortal(
-                <div
-                  className="settingsOverlay"
-                  onClick={() => {
-                    if (!modelMenuSaving) {
-                      setModelMenuOpen(false);
-                    }
-                  }}
-                >
-                  <section
-                    className="settingsDialog proxyModelDialog"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label={proxyCopy.modelMenuTitle}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="settingsHeader">
-                      <div>
-                        <h2>{proxyCopy.modelMenuTitle}</h2>
-                        <p className="proxyModelDialogSubtitle">{proxyCopy.modelMenuDialogDescription}</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="iconButton ghost closeButton"
-                        onClick={() => setModelMenuOpen(false)}
-                        title={copy.common.close}
-                        disabled={modelMenuSaving}
-                        aria-label={copy.common.close}
-                      >
-                        <svg className="iconGlyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                          <path d="m6 6 12 12" />
-                          <path d="M18 6 6 18" />
-                        </svg>
-                      </button>
-                    </div>
-
-                    <div className="proxyModelDialogToolbar">
-                      <label className="proxyModelSearchField">
-                        <span className="visuallyHidden">{proxyCopy.modelMenuSearchLabel}</span>
-                        <input
-                          className="proxyModelSearchInput"
-                          type="search"
-                          value={modelSearchQuery}
-                          onChange={(event) => setModelSearchQuery(event.currentTarget.value)}
-                          placeholder={proxyCopy.modelMenuSearchPlaceholder}
-                          spellCheck={false}
-                          autoFocus
-                        />
-                      </label>
-
-                      <div className="proxyModelDialogToolbarActions">
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => setModelMenuDraft([])}
-                          disabled={modelMenuSaving || apiProxySupportedModels.length === 0}
-                        >
-                          {proxyCopy.modelMenuEnableAll}
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => setModelMenuDraft(apiProxySupportedModels)}
-                          disabled={modelMenuSaving || apiProxySupportedModels.length === 0}
-                        >
-                          {proxyCopy.modelMenuDisableAll}
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => setModelMenuOpen(false)}
-                          disabled={modelMenuSaving}
-                        >
-                          {proxyCopy.modelMenuCancel}
-                        </button>
-                        <button
-                          type="button"
-                          className="primary"
-                          onClick={() => void handleSaveProxyModels()}
-                          disabled={modelMenuSaving || !hasModelMenuChanges}
-                        >
-                          {proxyCopy.modelMenuSave}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="proxyModelDialogList">
-                      {filteredProxyModels.length === 0 ? (
-                        <div className="proxyModelEmptyState">{proxyCopy.modelMenuSearchEmpty}</div>
-                      ) : filteredProxyModels.map((model) => {
-                        const enabled = !effectiveModelMenuDraft.includes(model);
-                        return (
-                          <label key={model} className="proxyModelToggleRow">
-                            <strong className="proxyModelToggleName">{model}</strong>
-                            <span className="themeSwitch proxyModelToggleControl">
-                              <input
-                                type="checkbox"
-                                checked={enabled}
-                                disabled={modelMenuSaving}
-                                onChange={(event) => handleToggleProxyModel(model, event.target.checked)}
-                              />
-                              <span className="themeSwitchTrack" aria-hidden="true">
-                                <span className="themeSwitchThumb" />
-                              </span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </section>
-                </div>,
-                document.body,
-              )
-            : null}
-        </section>
-
-        <section className="proxySectionCard">
-          <div className="proxySectionHeader">
-            <div className="remoteSectionHeading">
-              <h3>{proxyCopy.remoteTitle}</h3>
-              <p>{proxyCopy.remoteDescription}</p>
-            </div>
-            <button className="primary" onClick={addRemoteDraft}>
-              {proxyCopy.remoteAddServer}
+          <div className="compactQuickActionRow">
+            <button
+              type="button"
+              className="compactTextLink"
+              onClick={() => handleToggleAll(true)}
+            >
+              {proxyCopy.modelMenuEnableAll}
+            </button>
+            <button
+              type="button"
+              className="compactTextLink"
+              onClick={() => handleToggleAll(false)}
+            >
+              {proxyCopy.modelMenuDisableAll}
             </button>
           </div>
 
-          {hasRemoteServers ? (
-            <div className="remoteWorkspace">
-              <aside className="remoteHistoryPanel">
-                <div className="remoteHistoryHeader">
-                  <span className="proxyLabel">{proxyCopy.remoteHistoryTitle}</span>
-                  <strong>{orderedRemoteDrafts.length}</strong>
-                </div>
-                <div className="remoteHistoryList">
-                  {orderedRemoteDrafts.map((draft) => {
-                    const remoteStatus = remoteStatuses[draft.id];
-                    const remoteIdentity =
-                      draft.label.trim() || draft.host.trim() || proxyCopy.remoteTitle;
-                    const recentCheckedAt = remoteHistory[draft.id] ?? 0;
-                    const historyStateText =
-                      refreshingRemoteId === draft.id
-                        ? proxyCopy.remoteRefreshing
-                        : remoteStatus?.running
-                          ? proxyCopy.statusRunning
-                          : remoteStatus?.installed
-                            ? proxyCopy.statusStopped
-                            : isRemoteDraftConfigured(draft)
-                              ? proxyCopy.remoteInstalledNo
-                              : proxyCopy.remoteStatusUnknown;
+          <div className="compactModelChecklist">
+            {filteredModels.map((m) => {
+              const isEnabled = !modelDraft.includes(m);
+              return (
+                <label key={m} className="compactModelItem">
+                  <input
+                    type="checkbox"
+                    checked={isEnabled}
+                    onChange={() => handleToggleModel(m)}
+                  />
+                  <span className="compactModelName" title={m}>
+                    {m}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
 
-                    return (
-                      <button
-                        key={draft.id}
-                        type="button"
-                        className={`remoteHistoryItem${
-                          resolvedSelectedRemoteId === draft.id ? " isSelected" : ""
-                        }`}
-                        onClick={() => selectRemoteDraft(draft.id)}
-                      >
-                        <div className="remoteHistoryItemTop">
-                          <div className="remoteHistoryIdentity">
-                            <strong>{remoteIdentity}</strong>
-                            <span>{draft.host.trim() || "--"}</span>
-                          </div>
-                          <span
-                            className={`remoteServerState${
-                              remoteStatus?.running ? " isRunning" : ""
-                            }`}
-                          >
-                            <span
-                              className={`proxyStatusDot${
-                                remoteStatus?.running ? " isRunning" : ""
-                              }`}
-                              aria-hidden="true"
-                            />
-                            {historyStateText}
-                          </span>
-                        </div>
+          <div className="compactSubpageFooter">
+            <button
+              type="button"
+              className="compactBtnGhost"
+              onClick={() => setSubpage(null)}
+            >
+              {proxyCopy.modelMenuCancel}
+            </button>
+            <button
+              type="button"
+              className="compactBtnPrimary"
+              disabled={savingModels}
+              onClick={handleSaveModels}
+            >
+              {savingModels ? (locale.startsWith("zh") ? "保存中..." : "Saving...") : proxyCopy.modelMenuSave}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
-                        <div className="remoteHistoryItemMeta">
-                          <span>
-                            SSH {(draft.sshUser.trim() || "root")}:{draft.sshPort.trim() || "--"}
-                          </span>
-                          <span>
-                            {proxyCopy.remoteLastCheckedLabel}{" "}
-                            {recentCheckedAt > 0
-                              ? formatRemoteHistoryTime(locale, recentCheckedAt)
-                              : proxyCopy.remoteNeverChecked}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </aside>
+  // 渲染子页: 新增 API Key
+  if (subpage === "new-key") {
+    const handleCreateKey = async () => {
+      await onCreateApiProxyKey({
+        label: newKeyLabel.trim() || proxyCopy.keyCreateDefaultLabel,
+        key: newKeyValue.trim() || null,
+        allowedModels: [],
+        allowedReasoningEfforts: [],
+        allowedServiceTiers: [],
+      });
+      setNewKeyLabel("");
+      setNewKeyValue("");
+      setSubpage(null);
+    };
 
-              {selectedRemoteDraft ? (
-                <div className="remoteWorkbench">
-                  <article className="remoteWorkbenchCard">
-                    <div className="remoteWorkbenchHeader">
-                      <div className="remoteServerSummary">
-                        <div className="remoteServerIdentity">
-                          <strong>{selectedRemoteIdentity}</strong>
-                          <span>
-                            {selectedRemoteStatus?.baseUrl ?? buildRemoteBaseUrl(selectedRemoteDraft)}
-                          </span>
-                        </div>
-                        <div className="remoteServerSummaryMeta">
-                          <span className="remoteServerSummaryPill">
-                            {proxyCopy.remoteHostLabel} {selectedRemoteDraft.host.trim() || "--"}
-                          </span>
-                          <span className="remoteServerSummaryPill">
-                            SSH {(selectedRemoteDraft.sshUser.trim() || "root")}:
-                            {selectedRemoteDraft.sshPort.trim() || "--"}
-                          </span>
-                          <span className="remoteServerSummaryPill">
-                            {proxyCopy.remoteListenPortLabel}{" "}
-                            {selectedRemoteDraft.listenPort.trim() || "--"}
-                          </span>
-                          <span className="remoteServerSummaryPill">
-                            {proxyCopy.remoteLastCheckedLabel} {selectedRemoteCheckedLabel}
-                          </span>
-                        </div>
-                      </div>
+    return (
+      <section className="compactProxyPage">
+        <div className="compactSubpageHeader">
+          <button type="button" className="compactBackButton" onClick={() => setSubpage(null)}>
+            ‹ {locale.startsWith("zh") ? "返回密钥列表" : "Back"}
+          </button>
+          <h3>{proxyCopy.keyCreateAction}</h3>
+        </div>
 
-                      <div className="remoteWorkbenchActions">
-                        <button
-                          className="ghost"
-                          onClick={() => {
-                            if (!selectedRemoteDraft) {
-                              return;
-                            }
-                            if (!selectedRemoteConfigured) {
-                              setEditingRemoteId(selectedRemoteDraft.id);
-                              return;
-                            }
-                            if (selectedRemoteConfig) {
-                              setRemoteHistory((current) => ({
-                                ...current,
-                                [selectedRemoteDraft.id]: Date.now(),
-                              }));
-                              onRefreshRemoteStatus(selectedRemoteConfig);
-                            }
-                          }}
-                          disabled={selectedRemoteBusy}
-                        >
-                          {selectedRefreshing ? proxyCopy.remoteRefreshing : proxyCopy.remoteRefresh}
-                        </button>
-                        <button
-                          className="ghost"
-                          onClick={() =>
-                            setEditingRemoteId((current) =>
-                              current === selectedRemoteDraft.id ? null : selectedRemoteDraft.id,
-                            )
-                          }
-                        >
-                          {editingSelectedRemote ? proxyCopy.remoteCollapse : proxyCopy.remoteExpand}
-                        </button>
-                        {selectedRemoteStatus?.installed ? (
-                          selectedRemoteStatus.running ? (
-                            <button
-                              className="danger"
-                              onClick={() => {
-                                if (selectedRemoteConfig) {
-                                  onStopRemote(selectedRemoteConfig);
-                                }
-                              }}
-                              disabled={!selectedRemoteConfigured || selectedRemoteBusy}
-                            >
-                              {selectedStopping ? proxyCopy.remoteStopping : proxyCopy.remoteStop}
-                            </button>
-                          ) : (
-                            <button
-                              className="primary"
-                              onClick={() => {
-                                if (selectedRemoteConfig) {
-                                  onStartRemote(selectedRemoteConfig);
-                                }
-                              }}
-                              disabled={!selectedRemoteConfigured || selectedRemoteBusy}
-                            >
-                              {selectedStarting ? proxyCopy.remoteStarting : proxyCopy.remoteStart}
-                            </button>
-                          )
-                        ) : (
-                          <button
-                            className="primary"
-                            onClick={() => {
-                              if (selectedRemoteConfig) {
-                                onDeployRemote(selectedRemoteConfig);
-                              }
-                            }}
-                            disabled={!selectedRemoteConfigured || selectedRemoteBusy}
-                          >
-                            {selectedDeploying ? proxyCopy.remoteDeploying : proxyCopy.remoteDeploy}
-                          </button>
-                        )}
-                      </div>
-                    </div>
+        <div className="compactSubpageBody">
+          <label className="compactFormField">
+            <span>{proxyCopy.keyNameLabel}</span>
+            <input
+              className="compactInput"
+              value={newKeyLabel}
+              placeholder={proxyCopy.keyCreateNamePlaceholder}
+              onChange={(e) => setNewKeyLabel(e.target.value)}
+              autoFocus
+            />
+          </label>
 
-                    <div className="remoteServerStatus">
-                      <div className="remoteServerMeta">
-                        <span>{proxyCopy.remoteInstalledLabel}</span>
-                        <strong>{selectedRemoteInstalledText}</strong>
-                      </div>
-                      <div className="remoteServerMeta">
-                        <span>{proxyCopy.remoteSystemdLabel}</span>
-                        <strong>{selectedRemoteSystemdText}</strong>
-                      </div>
-                      <div className="remoteServerMeta">
-                        <span>{proxyCopy.remoteEnabledLabel}</span>
-                        <strong>{selectedRemoteEnabledText}</strong>
-                      </div>
-                      <div className="remoteServerMeta">
-                        <span>{proxyCopy.remoteRunningLabel}</span>
-                        <strong>{selectedRemoteRunningText}</strong>
-                      </div>
-                      <div className="remoteServerMeta">
-                        <span>{proxyCopy.remotePidLabel}</span>
-                        <strong>{selectedRemoteStatus?.pid ?? "--"}</strong>
-                      </div>
-                    </div>
-                  </article>
+          <label className="compactFormField">
+            <span>{locale.startsWith("zh") ? "自定义密钥 (可选)" : "Custom Key (Optional)"}</span>
+            <input
+              className="compactInput"
+              value={newKeyValue}
+              placeholder={proxyCopy.keyCreateSecretPlaceholder}
+              onChange={(e) => setNewKeyValue(e.target.value)}
+            />
+          </label>
 
-                  <article className="proxyDetailCard remoteGuideCard">
-                    <span className="proxyLabel">{proxyCopy.remoteKicker}</span>
-                    <strong>{remoteGuideTitle}</strong>
-                    <p>{remoteGuideDescription}</p>
-                    <div className="remoteGuideActions">
-                      {selectedRemoteConfigured ? (
-                        selectedRemoteStatus?.running ? (
-                          <>
-                            <button
-                              className="ghost"
-                              onClick={() => copyText(selectedRemoteStatus.baseUrl)}
-                              disabled={!selectedRemoteStatus.baseUrl}
-                            >
-                              {proxyCopy.remoteBaseUrlLabel}
-                            </button>
-                            <button
-                              className="ghost"
-                              onClick={() => copyText(selectedRemoteStatus.apiKey ?? null)}
-                              disabled={!selectedRemoteStatus.apiKey}
-                            >
-                              {proxyCopy.remoteApiKeyLabel}
-                            </button>
-                            <button
-                              className="ghost"
-                              onClick={toggleSelectedDiagnostics}
-                              disabled={selectedReadingLogs}
-                            >
-                              {diagnosticsOpen
-                                ? proxyCopy.remoteCollapse
-                                : selectedReadingLogs
-                                  ? proxyCopy.remoteReadingLogs
-                                  : proxyCopy.remoteReadLogs}
-                            </button>
-                          </>
-                        ) : null
-                      ) : (
-                        <button
-                          className="ghost"
-                          onClick={() => setEditingRemoteId(selectedRemoteDraft.id)}
-                        >
-                          {proxyCopy.remoteExpand}
-                        </button>
-                      )}
-                    </div>
+          <div className="compactSubpageFooter">
+            <button
+              type="button"
+              className="compactBtnGhost"
+              onClick={() => setSubpage(null)}
+            >
+              {locale.startsWith("zh") ? "取消" : "Cancel"}
+            </button>
+            <button
+              type="button"
+              className="compactBtnPrimary"
+              disabled={savingApiProxyKey}
+              onClick={handleCreateKey}
+            >
+              {proxyCopy.keyCreateAction}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
-                    <div className="proxyDetailGrid remoteProxyDetailGrid">
-                      <article className="proxyDetailCard">
-                        <div className="proxyDetailHeader">
-                          <span className="proxyLabel">{proxyCopy.remoteBaseUrlLabel}</span>
-                          <button
-                            className="ghost proxyCopyButton"
-                            onClick={() =>
-                              copyText(
-                                selectedRemoteStatus?.baseUrl ??
-                                  buildRemoteBaseUrl(selectedRemoteDraft),
-                              )
-                            }
-                          >
-                            {proxyCopy.copy}
-                          </button>
-                        </div>
-                        <code>
-                          {selectedRemoteStatus?.baseUrl ?? buildRemoteBaseUrl(selectedRemoteDraft)}
-                        </code>
-                      </article>
+  // 渲染子页: 密钥详情
+  if (subpage === "key-detail" && selectedKeyId) {
+    const key = apiProxyKeys.find((k) => k.id === selectedKeyId);
+    if (!key) {
+      setSubpage(null);
+      return null;
+    }
 
-                      <article className="proxyDetailCard">
-                        <div className="proxyDetailHeader">
-                          <span className="proxyLabel">{proxyCopy.remoteApiKeyLabel}</span>
-                          <button
-                            className="ghost proxyCopyButton"
-                            onClick={() => copyText(selectedRemoteStatus?.apiKey ?? null)}
-                            disabled={!selectedRemoteStatus?.apiKey}
-                          >
-                            {proxyCopy.copy}
-                          </button>
-                        </div>
-                        <code>{selectedRemoteStatus?.apiKey ?? proxyCopy.apiKeyPlaceholder}</code>
-                      </article>
+    const summary = summarizeApiProxyKeyLogs(apiProxyKeyLogs, key.id);
+    const matchedLogs = apiProxyKeyLogs.filter((l) => l.keyId === key.id);
 
-                      <article className="proxyDetailCard">
-                        <span className="proxyLabel">{proxyCopy.remoteServiceLabel}</span>
-                        <code>{selectedRemoteStatus?.serviceName ?? proxyCopy.remoteStatusUnknown}</code>
-                      </article>
-                    </div>
-                  </article>
+    return (
+      <section className="compactProxyPage">
+        <div className="compactSubpageHeader">
+          <button type="button" className="compactBackButton" onClick={() => setSubpage(null)}>
+            ‹ {locale.startsWith("zh") ? "返回密钥列表" : "Back"}
+          </button>
+          <h3>{key.label}</h3>
+        </div>
 
-                  {editingSelectedRemote ? (
-                    <div className="remoteWorkbenchSection">
-                      <div className="remoteWorkbenchSectionHeader">
-                        <div>
-                          <span className="proxyLabel">{proxyCopy.remoteConfigTitle}</span>
-                          <strong>{selectedRemoteIdentity}</strong>
-                        </div>
-                        <div className="remoteWorkbenchSectionActions">
-                          <button
-                            className="ghost"
-                            onClick={() => {
-                              persistRemoteDrafts(effectiveRemoteDrafts);
-                              setEditingRemoteId(null);
-                            }}
-                            disabled={selectedRemoteBusy}
-                          >
-                            {proxyCopy.remoteSave}
-                          </button>
-                          <button
-                            className="ghost"
-                            onClick={() => removeRemoteDraft(selectedRemoteDraft.id)}
-                            disabled={selectedRemoteBusy}
-                          >
-                            {proxyCopy.remoteRemove}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="remoteServerPanel">
-                        <div className="remoteServerGrid">
-                          <label className="remoteServerField">
-                            <span>{proxyCopy.remoteNameLabel}</span>
-                            <input
-                              value={selectedRemoteDraft.label}
-                              onChange={(event) =>
-                                updateRemoteDraft(
-                                  selectedRemoteDraft.id,
-                                  "label",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="tokyo-01"
-                            />
-                          </label>
-                          <label className="remoteServerField">
-                            <span>{proxyCopy.remoteHostLabel}</span>
-                            <input
-                              value={selectedRemoteDraft.host}
-                              onChange={(event) =>
-                                updateRemoteDraft(selectedRemoteDraft.id, "host", event.target.value)
-                              }
-                              placeholder="1.2.3.4"
-                            />
-                          </label>
-                          <label className="remoteServerField">
-                            <span>{proxyCopy.remoteSshPortLabel}</span>
-                            <input
-                              inputMode="numeric"
-                              value={selectedRemoteDraft.sshPort}
-                              onChange={(event) =>
-                                updateRemoteDraft(
-                                  selectedRemoteDraft.id,
-                                  "sshPort",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder={DEFAULT_REMOTE_SSH_PORT}
-                            />
-                          </label>
-                          <label className="remoteServerField">
-                            <span>{proxyCopy.remoteUserLabel}</span>
-                            <input
-                              value={selectedRemoteDraft.sshUser}
-                              onChange={(event) =>
-                                updateRemoteDraft(
-                                  selectedRemoteDraft.id,
-                                  "sshUser",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="root"
-                            />
-                          </label>
-                          <label className="remoteServerField">
-                            <span>{proxyCopy.remoteDirLabel}</span>
-                            <input
-                              value={selectedRemoteDraft.remoteDir}
-                              onChange={(event) =>
-                                updateRemoteDraft(
-                                  selectedRemoteDraft.id,
-                                  "remoteDir",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="/opt/codex-tools"
-                            />
-                          </label>
-                          <label className="remoteServerField">
-                            <span>{proxyCopy.remoteListenPortLabel}</span>
-                            <input
-                              inputMode="numeric"
-                              value={selectedRemoteDraft.listenPort}
-                              onChange={(event) =>
-                                updateRemoteDraft(
-                                  selectedRemoteDraft.id,
-                                  "listenPort",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder={DEFAULT_REMOTE_LISTEN_PORT}
-                            />
-                          </label>
-                        </div>
-                      </div>
-
-                      <div className="remoteServerPanel">
-                        <div className="remoteAuthRow">
-                          <label className="remoteServerField remoteAuthSelectField">
-                            <span>{proxyCopy.remoteAuthLabel}</span>
-                            <EditorMultiSelect
-                              className="remoteAuthPicker"
-                              ariaLabel={proxyCopy.remoteAuthLabel}
-                              options={remoteAuthOptions}
-                              value={selectedRemoteDraft.authMode}
-                              onChange={(next) =>
-                                updateRemoteDraft(selectedRemoteDraft.id, "authMode", next)
-                              }
-                            />
-                          </label>
-
-                          <div className="remoteAuthInputArea">
-                            {selectedRemoteDraft.authMode === "keyContent" ? (
-                              <label className="remoteServerField">
-                                <span>{proxyCopy.remotePrivateKeyLabel}</span>
-                                <textarea
-                                  className="remoteServerTextarea"
-                                  value={selectedRemoteDraft.privateKey}
-                                  onChange={(event) =>
-                                    updateRemoteDraft(
-                                      selectedRemoteDraft.id,
-                                      "privateKey",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder={proxyCopy.remotePrivateKeyPlaceholder}
-                                />
-                              </label>
-                            ) : null}
-
-                            {selectedRemoteDraft.authMode === "password" ? (
-                              <label className="remoteServerField">
-                                <span>{proxyCopy.remotePasswordLabel}</span>
-                                <input
-                                  type="password"
-                                  value={selectedRemoteDraft.password}
-                                  onChange={(event) =>
-                                    updateRemoteDraft(
-                                      selectedRemoteDraft.id,
-                                      "password",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder={proxyCopy.remotePasswordPlaceholder}
-                                />
-                              </label>
-                            ) : null}
-
-                            {selectedRemoteDraft.authMode === "keyFile" ||
-                            selectedRemoteDraft.authMode === "keyPath" ? (
-                              <div className="remoteIdentityRow">
-                                <label className="remoteServerField">
-                                  <span>{proxyCopy.remoteIdentityFileLabel}</span>
-                                  <input
-                                    value={selectedRemoteDraft.identityFile}
-                                    onChange={(event) =>
-                                      updateRemoteDraft(
-                                        selectedRemoteDraft.id,
-                                        "identityFile",
-                                        event.target.value,
-                                      )
-                                    }
-                                    placeholder={proxyCopy.remoteIdentityFilePlaceholder}
-                                  />
-                                </label>
-                                {selectedRemoteDraft.authMode === "keyFile" ? (
-                                  <button
-                                    className="ghost"
-                                    type="button"
-                                    onClick={() => {
-                                      void onPickLocalIdentityFile().then((value) => {
-                                        if (value) {
-                                          updateRemoteDraft(
-                                            selectedRemoteDraft.id,
-                                            "identityFile",
-                                            value,
-                                          );
-                                        }
-                                      });
-                                    }}
-                                  >
-                                    {proxyCopy.remotePickIdentityFile}
-                                  </button>
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-
-                      {selectedInstallingDependency ? (
-                        <div
-                          className="remoteDependencyInstall"
-                          role="status"
-                          aria-live="polite"
-                          aria-busy="true"
-                        >
-                          <div className="remoteDependencyInstallHeader">
-                            <strong>{copy.notices.installingDependency("sshpass")}</strong>
-                          </div>
-                          <div className="remoteDependencyInstallTrack" aria-hidden="true">
-                            <span className="remoteDependencyInstallFill" />
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  <div className="remoteWorkbenchSection">
-                    <div className="remoteWorkbenchSectionHeader">
-                      <div>
-                        <span className="proxyLabel">{proxyCopy.remoteLogsLabel}</span>
-                        <strong>{selectedRemoteIdentity}</strong>
-                      </div>
-                      <div className="remoteWorkbenchSectionActions">
-                        <button
-                          className="ghost"
-                          onClick={toggleSelectedDiagnostics}
-                          disabled={selectedReadingLogs}
-                        >
-                          {diagnosticsOpen
-                            ? proxyCopy.remoteCollapse
-                            : selectedReadingLogs
-                              ? proxyCopy.remoteReadingLogs
-                              : proxyCopy.remoteReadLogs}
-                        </button>
-                      </div>
-                    </div>
-
-                    {diagnosticsOpen ? (
-                      <div className="remoteDiagnosticsGrid">
-                        <article className="proxyDetailCard remoteLogCard">
-                          <div className="proxyDetailHeader">
-                            <span className="proxyLabel">{proxyCopy.remoteLogsLabel}</span>
-                            <button
-                              className="ghost proxyCopyButton"
-                              onClick={() => copyText(selectedRemoteLog ?? null)}
-                              disabled={!selectedRemoteLog}
-                            >
-                              {proxyCopy.copy}
-                            </button>
-                          </div>
-                          <code className="remoteLogCode">
-                            {selectedRemoteLog ?? proxyCopy.remoteLogsEmpty}
-                          </code>
-                        </article>
-
-                        <article className="proxyDetailCard remoteErrorCard">
-                          <span className="proxyLabel">{proxyCopy.remoteLastErrorLabel}</span>
-                          <p className="proxyErrorText">
-                            {selectedRemoteStatus?.lastError ?? proxyCopy.none}
-                          </p>
-                        </article>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <article className="cloudflaredCallout">
-              <strong>{proxyCopy.remoteEmptyTitle}</strong>
-              <p>{proxyCopy.remoteEmptyDescription}</p>
-            </article>
-          )}
-        </section>
-
-        <section className="proxySectionCard">
-          <div className="proxySectionHeader">
-            <h3>{proxyCopy.cloudflaredTitle}</h3>
-            <div className="proxySwitchRow proxySectionToggle">
-              <div className="settingMeta">
-                <strong>{proxyCopy.cloudflaredToggle}</strong>
+        <div className="compactSubpageBody">
+          {/* 密钥明细与复制 */}
+          <div className="compactDetailBox">
+            <div className="compactKeySecretRow">
+              <code className="compactKeySecretCode">
+                {showSecretKey ? key.key : "••••••••••••••••"}
+              </code>
+              <div className="compactKeySecretActions">
+                <button
+                  type="button"
+                  className="compactMiniBtn"
+                  onClick={() => setShowSecretKey((s) => !s)}
+                >
+                  {showSecretKey ? (locale.startsWith("zh") ? "隐藏" : "Hide") : (locale.startsWith("zh") ? "显示" : "Show")}
+                </button>
+                <button
+                  type="button"
+                  className="compactMiniBtn"
+                  onClick={() => copyText(key.key)}
+                >
+                  {proxyCopy.copy}
+                </button>
               </div>
-              <label className="themeSwitch" aria-label={proxyCopy.cloudflaredToggle}>
-                <input
-                  type="checkbox"
-                  checked={publicAccessEnabled}
-                  onChange={(event) => setPublicAccessEnabled(event.target.checked)}
-                />
-                <span className="themeSwitchTrack" aria-hidden="true">
-                  <span className="themeSwitchThumb" />
-                </span>
-                <span className="themeSwitchText">
-                  {publicAccessEnabled
-                    ? proxyCopy.defaultStartEnabled
-                    : proxyCopy.defaultStartDisabled}
-                </span>
-              </label>
+            </div>
+
+            {/* 调用摘要 */}
+            <div className="compactKeyStatsGrid">
+              <div className="compactKeyStat">
+                <span>{locale.startsWith("zh") ? "调用次数" : "Requests"}</span>
+                <strong>{summary.totalCalls}</strong>
+              </div>
+              <div className="compactKeyStat">
+                <span>Token</span>
+                <strong>{formatTokenCount(summary.totalTokens, locale)}</strong>
+              </div>
+              <div className="compactKeyStat">
+                <span>{locale.startsWith("zh") ? "最近调用" : "Last Used"}</span>
+                <strong>{formatApiProxyKeyLogTime(locale, summary.lastUsedAt)}</strong>
+              </div>
             </div>
           </div>
 
-          {cloudflaredEnabled ? (
-            <div className="cloudflaredContent">
-              {!status.running ? (
-                <article className="cloudflaredCallout">
-                  <strong>{proxyCopy.startLocalProxyFirstTitle}</strong>
-                  <p>{proxyCopy.startLocalProxyFirstDescription}</p>
-                </article>
-              ) : null}
-
-              {!cloudflaredStatus.installed ? (
-                <article className="cloudflaredInstallCard">
-                  <div>
-                    <span className="proxyLabel">{proxyCopy.notInstalledLabel}</span>
-                    <strong>{proxyCopy.installTitle}</strong>
-                    <p>{proxyCopy.installDescription}</p>
-                  </div>
-                  <button
-                    className="primary"
-                    onClick={onInstallCloudflared}
-                    disabled={installingCloudflared}
-                  >
-                    {installingCloudflared ? proxyCopy.installing : proxyCopy.installButton}
-                  </button>
-                </article>
-              ) : (
-                <>
-                  <div className="cloudflaredModeGrid">
-                    <button
-                      className={`cloudflaredModeCard${tunnelMode === "quick" ? " isActive" : ""}`}
-                      onClick={() => setTunnelMode("quick")}
-                      disabled={cloudflaredBusy || cloudflaredStatus.running}
-                    >
-                      <span className="proxyLabel">{proxyCopy.quickModeLabel}</span>
-                      <strong>{proxyCopy.quickModeTitle}</strong>
-                      <p>{proxyCopy.quickModeDescription}</p>
-                    </button>
-                    <button
-                      className={`cloudflaredModeCard${tunnelMode === "named" ? " isActive" : ""}`}
-                      onClick={() => setTunnelMode("named")}
-                      disabled={cloudflaredBusy || cloudflaredStatus.running}
-                    >
-                      <span className="proxyLabel">{proxyCopy.namedModeLabel}</span>
-                      <strong>{proxyCopy.namedModeTitle}</strong>
-                      <p>{proxyCopy.namedModeDescription}</p>
-                    </button>
-                  </div>
-
-                  {tunnelMode === "quick" ? (
-                    <article className="cloudflaredCallout">
-                      <strong>{proxyCopy.quickNoteTitle}</strong>
-                      <p>{proxyCopy.quickNoteBody}</p>
-                    </article>
-                  ) : null}
-
-                  {tunnelMode === "named" ? (
-                    <div className="cloudflaredFormGrid">
-                      <label className="cloudflaredInputField">
-                        <span>{proxyCopy.apiTokenLabel}</span>
-                        <input
-                          type="password"
-                          value={namedInput.apiToken}
-                          onChange={(event) =>
-                            setNamedInput((current) => ({ ...current, apiToken: event.target.value }))
-                          }
-                          placeholder={proxyCopy.apiTokenPlaceholder}
-                          disabled={cloudflaredBusy || cloudflaredStatus.running}
-                        />
-                      </label>
-                      <label className="cloudflaredInputField">
-                        <span>{proxyCopy.accountIdLabel}</span>
-                        <input
-                          value={namedInput.accountId}
-                          onChange={(event) =>
-                            setNamedInput((current) => ({ ...current, accountId: event.target.value }))
-                          }
-                          placeholder={proxyCopy.accountIdPlaceholder}
-                          disabled={cloudflaredBusy || cloudflaredStatus.running}
-                        />
-                      </label>
-                      <label className="cloudflaredInputField">
-                        <span>{proxyCopy.zoneIdLabel}</span>
-                        <input
-                          value={namedInput.zoneId}
-                          onChange={(event) =>
-                            setNamedInput((current) => ({ ...current, zoneId: event.target.value }))
-                          }
-                          placeholder={proxyCopy.zoneIdPlaceholder}
-                          disabled={cloudflaredBusy || cloudflaredStatus.running}
-                        />
-                      </label>
-                      <label className="cloudflaredInputField">
-                        <span>{proxyCopy.hostnameLabel}</span>
-                        <input
-                          value={namedInput.hostname}
-                          onChange={(event) =>
-                            setNamedInput((current) => ({ ...current, hostname: event.target.value }))
-                          }
-                          placeholder={proxyCopy.hostnamePlaceholder}
-                          disabled={cloudflaredBusy || cloudflaredStatus.running}
-                        />
-                      </label>
-                    </div>
-                  ) : null}
-
-                  <div className="cloudflaredToolbar">
-                    <div className="proxySwitchRow cloudflaredToolbarMeta">
-                      <div className="settingMeta">
-                        <strong>{proxyCopy.useHttp2}</strong>
-                      </div>
-                      <label className="themeSwitch" aria-label={proxyCopy.useHttp2}>
+          {/* 权限手风琴 */}
+          <div className="compactAccordionGroup">
+            {/* 允许模型 */}
+            <div className="compactAccordionItem">
+              <button
+                type="button"
+                className="compactAccordionHeader"
+                onClick={() =>
+                  setKeyAccordionOpen((curr) => (curr === "models" ? null : "models"))
+                }
+              >
+                <span>{proxyCopy.keyModelsLabel}</span>
+                <b>{key.allowedModels.length === 0 ? (locale.startsWith("zh") ? "全部可用" : "All") : `${key.allowedModels.length} 个`} ›</b>
+              </button>
+              {keyAccordionOpen === "models" ? (
+                <div className="compactAccordionContent">
+                  {apiProxySupportedModels.map((m) => {
+                    const isAllowed =
+                      key.allowedModels.length === 0 || key.allowedModels.includes(m);
+                    return (
+                      <label key={m} className="compactModelItem">
                         <input
                           type="checkbox"
-                          checked={useHttp2}
-                          onChange={(event) => setUseHttp2(event.target.checked)}
-                          disabled={cloudflaredBusy || cloudflaredStatus.running}
-                        />
-                        <span className="themeSwitchTrack" aria-hidden="true">
-                          <span className="themeSwitchThumb" />
-                        </span>
-                        <span className="themeSwitchText">
-                          {useHttp2
-                            ? proxyCopy.defaultStartEnabled
-                            : proxyCopy.defaultStartDisabled}
-                        </span>
-                      </label>
-                    </div>
-
-                    <div className="cloudflaredToolbarActions">
-                      <button
-                        className="ghost"
-                        onClick={onRefreshCloudflared}
-                        disabled={cloudflaredBusy}
-                      >
-                        {proxyCopy.refreshPublicStatus}
-                      </button>
-                      {cloudflaredStatus.running ? (
-                        <button
-                          className="danger"
-                          onClick={onStopCloudflared}
-                          disabled={cloudflaredBusy}
-                        >
-                          {stoppingCloudflared ? proxyCopy.stoppingPublic : proxyCopy.stopPublic}
-                        </button>
-                      ) : (
-                        <button
-                          className="primary"
-                          onClick={() => {
-                            if (cloudflaredInput) {
-                              onStartCloudflared(cloudflaredInput);
-                            }
+                          checked={isAllowed}
+                          onChange={(e) => {
+                            const current =
+                              key.allowedModels.length === 0
+                                ? apiProxySupportedModels
+                                : key.allowedModels;
+                            const next = toggleStringValue(current, m, e.target.checked);
+                            void onUpdateApiProxyKey({ id: key.id, allowedModels: next });
                           }}
-                          disabled={!canStartCloudflared || cloudflaredInput === null}
+                        />
+                        <span className="compactModelName">{m}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            {/* 推理等级 */}
+            <div className="compactAccordionItem">
+              <button
+                type="button"
+                className="compactAccordionHeader"
+                onClick={() =>
+                  setKeyAccordionOpen((curr) => (curr === "reasoning" ? null : "reasoning"))
+                }
+              >
+                <span>{proxyCopy.keyReasoningLabel}</span>
+                <b>{key.allowedReasoningEfforts.length === 0 ? (locale.startsWith("zh") ? "全部" : "All") : `${key.allowedReasoningEfforts.length} 项`} ›</b>
+              </button>
+              {keyAccordionOpen === "reasoning" ? (
+                <div className="compactAccordionContent">
+                  {API_PROXY_REASONING_OPTION_IDS.map((eff) => {
+                    const isAllowed =
+                      key.allowedReasoningEfforts.length === 0 ||
+                      key.allowedReasoningEfforts.includes(eff);
+                    return (
+                      <label key={eff} className="compactModelItem">
+                        <input
+                          type="checkbox"
+                          checked={isAllowed}
+                          onChange={(e) => {
+                            const current =
+                              key.allowedReasoningEfforts.length === 0
+                                ? [...API_PROXY_REASONING_OPTION_IDS]
+                                : key.allowedReasoningEfforts;
+                            const next = toggleStringValue(current, eff, e.target.checked);
+                            void onUpdateApiProxyKey({ id: key.id, allowedReasoningEfforts: next });
+                          }}
+                        />
+                        <span className="compactModelName">{eff}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            {/* 服务等级 */}
+            <div className="compactAccordionItem">
+              <button
+                type="button"
+                className="compactAccordionHeader"
+                onClick={() =>
+                  setKeyAccordionOpen((curr) => (curr === "tiers" ? null : "tiers"))
+                }
+              >
+                <span>{proxyCopy.keyServiceTierLabel}</span>
+                <b>{key.allowedServiceTiers.length === 0 ? (locale.startsWith("zh") ? "全部" : "All") : `${key.allowedServiceTiers.length} 项`} ›</b>
+              </button>
+              {keyAccordionOpen === "tiers" ? (
+                <div className="compactAccordionContent">
+                  {API_PROXY_SERVICE_TIER_OPTION_IDS.map((tier) => {
+                    const isAllowed =
+                      key.allowedServiceTiers.length === 0 ||
+                      key.allowedServiceTiers.includes(tier);
+                    return (
+                      <label key={tier} className="compactModelItem">
+                        <input
+                          type="checkbox"
+                          checked={isAllowed}
+                          onChange={(e) => {
+                            const current =
+                              key.allowedServiceTiers.length === 0
+                                ? [...API_PROXY_SERVICE_TIER_OPTION_IDS]
+                                : key.allowedServiceTiers;
+                            const next = toggleStringValue(current, tier, e.target.checked);
+                            void onUpdateApiProxyKey({ id: key.id, allowedServiceTiers: next });
+                          }}
+                        />
+                        <span className="compactModelName">{tier}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            {/* 最近日志 */}
+            <div className="compactAccordionItem">
+              <button
+                type="button"
+                className="compactAccordionHeader"
+                onClick={() =>
+                  setKeyAccordionOpen((curr) => (curr === "logs" ? null : "logs"))
+                }
+              >
+                <span>{proxyCopy.keyLogsLabel}</span>
+                <b>{matchedLogs.length} 条 ›</b>
+              </button>
+              {keyAccordionOpen === "logs" ? (
+                <div className="compactAccordionContent compactLogsList">
+                  {matchedLogs.length === 0 ? (
+                    <span className="compactMutedText">{proxyCopy.keyNoLogs}</span>
+                  ) : (
+                    matchedLogs.slice(0, 30).map((log, idx) => (
+                      <div key={idx} className="compactLogItem">
+                        <div className="compactLogRow1">
+                          <strong>{log.model}</strong>
+                          <span>{log.calls} {locale.startsWith("zh") ? "次" : "calls"}</span>
+                        </div>
+                        <div className="compactLogRow2">
+                          <span>{formatApiProxyKeyLogTime(locale, log.timestamp)}</span>
+                          <span>{formatTokenCount(log.tokens ?? 0, locale)} Tok</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* 危险操作 */}
+          <div className="compactDangerActionsRow">
+            <button
+              type="button"
+              className={`compactDangerBtn${regenKeyConfirming ? " isConfirm" : ""}`}
+              onClick={() => {
+                if (!regenKeyConfirming) {
+                  setRegenKeyConfirming(true);
+                  window.setTimeout(() => setRegenKeyConfirming(false), 3000);
+                } else {
+                  void onRegenerateApiProxyKey(key.id);
+                  setRegenKeyConfirming(false);
+                }
+              }}
+            >
+              {regenKeyConfirming
+                ? (locale.startsWith("zh") ? "确认重新生成？" : "Confirm regen?")
+                : proxyCopy.keyRegenerate}
+            </button>
+
+            <button
+              type="button"
+              className={`compactDangerBtn${deleteKeyConfirming ? " isConfirm" : ""}`}
+              onClick={() => {
+                if (!deleteKeyConfirming) {
+                  setDeleteKeyConfirming(true);
+                  window.setTimeout(() => setDeleteKeyConfirming(false), 3000);
+                } else {
+                  void onDeleteApiProxyKey(key.id);
+                  setDeleteKeyConfirming(false);
+                  setSubpage(null);
+                }
+              }}
+            >
+              {deleteKeyConfirming
+                ? (locale.startsWith("zh") ? "确认删除密钥？" : "Confirm delete?")
+                : proxyCopy.keyDelete}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // 渲染子页: SSH 服务器详情
+  if (subpage === "server-detail" && targetRemoteDraft) {
+    const isBusy =
+      refreshingRemoteId === targetRemoteDraft.id ||
+      deployingRemoteId === targetRemoteDraft.id ||
+      startingRemoteId === targetRemoteDraft.id ||
+      stoppingRemoteId === targetRemoteDraft.id ||
+      (installingDependencyName !== null && installingDependencyTargetId === targetRemoteDraft.id);
+
+    const isRunning = targetRemoteStatus?.running ?? false;
+    const isInstalled = targetRemoteStatus?.installed ?? false;
+    const isReadingLogs = readingRemoteLogsId === targetRemoteDraft.id;
+
+    return (
+      <section className="compactProxyPage">
+        <div className="compactSubpageHeader">
+          <button type="button" className="compactBackButton" onClick={() => setSubpage(null)}>
+            ‹ {locale.startsWith("zh") ? "返回服务器列表" : "Back"}
+          </button>
+          <h3>{targetRemoteDraft.label || targetRemoteDraft.host}</h3>
+        </div>
+
+        <div className="compactSubpageBody">
+          {/* 状态与上下文主操作 */}
+          <div className="compactRemoteStatusCard">
+            <div className="compactRemoteStatusLeft">
+              <span className={`proxyStatusDot${isRunning ? " isRunning" : ""}`} />
+              <strong>{isRunning ? proxyCopy.statusRunning : proxyCopy.statusStopped}</strong>
+            </div>
+            <div className="compactRemoteStatusActions">
+              <button
+                type="button"
+                className="compactMiniBtn"
+                disabled={isBusy}
+                onClick={() => {
+                  setRemoteHistory((h) => ({ ...h, [targetRemoteDraft.id]: Date.now() }));
+                  onRefreshRemoteStatus(draftToConfig(targetRemoteDraft));
+                }}
+              >
+                {proxyCopy.remoteRefresh}
+              </button>
+
+              {isRunning ? (
+                <button
+                  type="button"
+                  className="compactBtnDanger"
+                  disabled={isBusy}
+                  onClick={() => onStopRemote(draftToConfig(targetRemoteDraft))}
+                >
+                  {stoppingRemoteId === targetRemoteDraft.id ? proxyCopy.remoteStopping : proxyCopy.remoteStop}
+                </button>
+              ) : isInstalled ? (
+                <button
+                  type="button"
+                  className="compactBtnPrimary"
+                  disabled={isBusy}
+                  onClick={() => onStartRemote(draftToConfig(targetRemoteDraft))}
+                >
+                  {startingRemoteId === targetRemoteDraft.id ? proxyCopy.remoteStarting : proxyCopy.remoteStart}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="compactBtnPrimary"
+                  disabled={isBusy}
+                  onClick={() => onDeployRemote(draftToConfig(targetRemoteDraft))}
+                >
+                  {deployingRemoteId === targetRemoteDraft.id ? proxyCopy.remoteDeploying : proxyCopy.remoteDeploy}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 2 x 2 摘要网格 */}
+          <div className="compactStatsGrid">
+            <div className="compactStatCell">
+              <span className="compactStatLabel">{proxyCopy.remoteInstalledLabel}</span>
+              <strong className="compactStatValue">
+                {isInstalled ? proxyCopy.remoteInstalledYes : proxyCopy.remoteInstalledNo}
+              </strong>
+            </div>
+            <div className="compactStatCell">
+              <span className="compactStatLabel">{proxyCopy.remoteSystemdLabel}</span>
+              <strong className="compactStatValue">
+                {targetRemoteStatus?.serviceInstalled ? proxyCopy.remoteInstalledYes : proxyCopy.remoteInstalledNo}
+              </strong>
+            </div>
+            <div className="compactStatCell">
+              <span className="compactStatLabel">{proxyCopy.remoteEnabledLabel}</span>
+              <strong className="compactStatValue">
+                {targetRemoteStatus?.enabled ? proxyCopy.remoteInstalledYes : proxyCopy.remoteInstalledNo}
+              </strong>
+            </div>
+            <div className="compactStatCell">
+              <span className="compactStatLabel">{proxyCopy.remotePidLabel}</span>
+              <strong className="compactStatValue">
+                {targetRemoteStatus?.pid ?? "--"}
+              </strong>
+            </div>
+          </div>
+
+          {/* 连接信息 */}
+          <div className="compactDetailBox">
+            <div className="compactDetailRow">
+              <span>{proxyCopy.remoteBaseUrlLabel}</span>
+              <div className="compactCopyValueWrap">
+                <code>http://{targetRemoteDraft.host}:{targetRemoteDraft.listenPort}</code>
+                <button
+                  type="button"
+                  className="compactMiniBtn"
+                  onClick={() => copyText(`http://${targetRemoteDraft.host}:${targetRemoteDraft.listenPort}`)}
+                >
+                  {proxyCopy.copy}
+                </button>
+              </div>
+            </div>
+            <div className="compactDetailRow">
+              <span>SSH</span>
+              <span>{targetRemoteDraft.sshUser}@{targetRemoteDraft.host}:{targetRemoteDraft.sshPort}</span>
+            </div>
+          </div>
+
+          {/* 折叠：SSH 配置表单 */}
+          <div className="compactAccordionItem">
+            <button
+              type="button"
+              className="compactAccordionHeader"
+              onClick={() => setSshConfigExpanded((e) => !e)}
+            >
+              <span>{proxyCopy.remoteConfigTitle}</span>
+              <b>{sshConfigExpanded ? "▲" : "▼"}</b>
+            </button>
+            {sshConfigExpanded ? (
+              <div className="compactAccordionContent compactFormGrid">
+                <label className="compactFormField">
+                  <span>{proxyCopy.remoteNameLabel}</span>
+                  <input
+                    className="compactInput"
+                    value={targetRemoteDraft.label}
+                    onChange={(e) => {
+                      const next = effectiveRemoteDrafts.map((d) =>
+                        d.id === targetRemoteDraft.id ? { ...d, label: e.target.value } : d,
+                      );
+                      setRemoteDrafts(next);
+                      persistRemoteDrafts(next);
+                    }}
+                  />
+                </label>
+                <label className="compactFormField">
+                  <span>{proxyCopy.remoteHostLabel}</span>
+                  <input
+                    className="compactInput"
+                    value={targetRemoteDraft.host}
+                    onChange={(e) => {
+                      const next = effectiveRemoteDrafts.map((d) =>
+                        d.id === targetRemoteDraft.id ? { ...d, host: e.target.value } : d,
+                      );
+                      setRemoteDrafts(next);
+                      persistRemoteDrafts(next);
+                    }}
+                  />
+                </label>
+                <label className="compactFormField">
+                  <span>{proxyCopy.remoteSshPortLabel}</span>
+                  <input
+                    className="compactInput"
+                    value={targetRemoteDraft.sshPort}
+                    onChange={(e) => {
+                      const next = effectiveRemoteDrafts.map((d) =>
+                        d.id === targetRemoteDraft.id ? { ...d, sshPort: e.target.value } : d,
+                      );
+                      setRemoteDrafts(next);
+                      persistRemoteDrafts(next);
+                    }}
+                  />
+                </label>
+                <label className="compactFormField">
+                  <span>{proxyCopy.remoteUserLabel}</span>
+                  <input
+                    className="compactInput"
+                    value={targetRemoteDraft.sshUser}
+                    onChange={(e) => {
+                      const next = effectiveRemoteDrafts.map((d) =>
+                        d.id === targetRemoteDraft.id ? { ...d, sshUser: e.target.value } : d,
+                      );
+                      setRemoteDrafts(next);
+                      persistRemoteDrafts(next);
+                    }}
+                  />
+                </label>
+                <div className="compactFormField">
+                  <span>{proxyCopy.remoteIdentityFileLabel}</span>
+                  <div className="compactRowActionWrap">
+                    <input
+                      className="compactInput"
+                      value={targetRemoteDraft.identityFile}
+                      placeholder={proxyCopy.remoteIdentityFilePlaceholder}
+                      onChange={(e) => {
+                        const next = effectiveRemoteDrafts.map((d) =>
+                          d.id === targetRemoteDraft.id ? { ...d, identityFile: e.target.value } : d,
+                        );
+                        setRemoteDrafts(next);
+                        persistRemoteDrafts(next);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="compactMiniBtn"
+                      onClick={async () => {
+                        const file = await onPickLocalIdentityFile();
+                        if (file) {
+                          const next = effectiveRemoteDrafts.map((d) =>
+                            d.id === targetRemoteDraft.id ? { ...d, identityFile: file } : d,
+                          );
+                          setRemoteDrafts(next);
+                          persistRemoteDrafts(next);
+                        }
+                      }}
+                    >
+                      {proxyCopy.remotePickIdentityFile}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* 折叠：日志与诊断 */}
+          <div className="compactAccordionItem">
+            <button
+              type="button"
+              className="compactAccordionHeader"
+              onClick={() => {
+                const next = !diagnosticsExpanded;
+                setDiagnosticsExpanded(next);
+                if (next && !targetRemoteLog && !isReadingLogs) {
+                  onReadRemoteLogs(draftToConfig(targetRemoteDraft));
+                }
+              }}
+            >
+              <span>{proxyCopy.remoteLogsLabel}</span>
+              <b>{diagnosticsExpanded ? "▲" : "▼"}</b>
+            </button>
+            {diagnosticsExpanded ? (
+              <div className="compactAccordionContent">
+                <div className="compactLogBox">
+                  <pre>{targetRemoteLog || proxyCopy.remoteLogsEmpty}</pre>
+                </div>
+                <button
+                  type="button"
+                  className="compactMiniBtn"
+                  disabled={isReadingLogs}
+                  onClick={() => onReadRemoteLogs(draftToConfig(targetRemoteDraft))}
+                >
+                  {isReadingLogs ? proxyCopy.remoteReadingLogs : proxyCopy.remoteReadLogs}
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {/* 移除服务器 */}
+          <div className="compactDangerActionsRow">
+            <button
+              type="button"
+              className={`compactDangerBtn${deleteServerConfirming ? " isConfirm" : ""}`}
+              onClick={() => {
+                if (!deleteServerConfirming) {
+                  setDeleteServerConfirming(true);
+                  window.setTimeout(() => setDeleteServerConfirming(false), 3000);
+                } else {
+                  const next = effectiveRemoteDrafts.filter((d) => d.id !== targetRemoteDraft.id);
+                  setRemoteDrafts(next);
+                  persistRemoteDrafts(next);
+                  setDeleteServerConfirming(false);
+                  setSubpage(null);
+                }
+              }}
+            >
+              {deleteServerConfirming
+                ? (locale.startsWith("zh") ? "确认移除此服务器？" : "Confirm remove?")
+                : proxyCopy.remoteRemove}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // 默认两层架构渲染：顶部控制器 + 4 个互斥分区
+  return (
+    <section className="compactProxyPage">
+      {/* 1. 始终位于顶部的服务控制器 */}
+      <section className="compactProxyController">
+        {/* 第一行：状态指示 + 端口 + 启动/停止 */}
+        <div className="compactControllerRow1">
+          <div className="compactControllerStatus">
+            <span className={`proxyStatusDot${status.running ? " isRunning" : ""}`} />
+            <strong>
+              {status.running
+                ? `${proxyCopy.statusRunning} · ${proxyCopy.portLabel} ${status.port}`
+                : `${proxyCopy.statusStopped} · ${proxyCopy.portLabel} ${status.port ?? savedPort ?? DEFAULT_PROXY_PORT}`}
+            </strong>
+          </div>
+
+          <div className="compactControllerActions">
+            {status.running ? (
+              <button
+                type="button"
+                className="compactMainActionBtn tone-danger"
+                disabled={busy}
+                onClick={onStop}
+              >
+                {stopping ? (locale.startsWith("zh") ? "停止中..." : "Stopping...") : proxyCopy.stop}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="compactMainActionBtn tone-primary"
+                disabled={busy || accountCount === 0 || effectivePort === null}
+                onClick={handleStart}
+              >
+                {starting ? (locale.startsWith("zh") ? "启动中..." : "Starting...") : proxyCopy.start}
+              </button>
+            )}
+
+            {/* 顶栏右侧 ⋯ 刷新状态 */}
+            <div className="compactMoreMenuWrap" ref={topMoreMenuRef}>
+              <button
+                type="button"
+                className="compactIconButton"
+                onClick={() => setTopMoreMenuOpen((o) => !o)}
+                title="服务操作"
+                aria-label="服务操作"
+              >
+                <svg className="iconGlyph" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="2" />
+                  <circle cx="19" cy="12" r="2" />
+                  <circle cx="5" cy="12" r="2" />
+                </svg>
+              </button>
+              {topMoreMenuOpen ? (
+                <div className="compactDropdownMenu">
+                  <button
+                    type="button"
+                    className="compactMenuItem"
+                    disabled={busy}
+                    onClick={() => {
+                      setTopMoreMenuOpen(false);
+                      onRefresh();
+                    }}
+                  >
+                    {proxyCopy.refreshStatus}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        {/* 启动禁用原因提示 */}
+        {!status.running && accountCount === 0 ? (
+          <span className="compactControllerHint tone-danger">
+            {locale.startsWith("zh") ? "请先在“账号”标签中添加并登录账号" : "Please add an account first"}
+          </span>
+        ) : null}
+
+        {/* 第二行：本地 Base URL + 复制 */}
+        <div className="compactControllerRow2">
+          <code className="compactBaseUrlCode" title={status.baseUrl ?? `http://127.0.0.1:${savedPort}`}>
+            {status.baseUrl ?? `http://127.0.0.1:${savedPort}`}
+          </code>
+          <button
+            type="button"
+            className="compactMiniBtn"
+            disabled={!status.baseUrl}
+            onClick={() => copyText(status.baseUrl)}
+          >
+            {proxyCopy.copy}
+          </button>
+        </div>
+
+        {/* 第三行：局域网地址折叠 */}
+        <div className="compactControllerRow3">
+          <button
+            type="button"
+            className="compactLanToggleBtn"
+            onClick={() => setLanExpanded((e) => !e)}
+          >
+            <span>{proxyCopy.lanBaseUrlLabel}</span>
+            <b>{lanExpanded ? "▲" : "›"}</b>
+          </button>
+          {lanExpanded ? (
+            <div className="compactLanBox">
+              <code>{status.lanBaseUrl || (locale.startsWith("zh") ? "未获取到局域网 IP" : "No LAN IP")}</code>
+              {status.lanBaseUrl ? (
+                <button
+                  type="button"
+                  className="compactMiniBtn"
+                  onClick={() => copyText(status.lanBaseUrl)}
+                >
+                  {proxyCopy.copy}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      {/* 2. 四个互斥主分区切换 Tab */}
+      <nav className="compactTabsNav" role="tablist">
+        {(["status", "usage", "keys", "remote"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab}
+            className={`compactTabButton${activeTab === tab ? " isActive" : ""}`}
+            onClick={() => setActiveTab(tab)}
+          >
+            {tab === "status"
+              ? (locale.startsWith("zh") ? "状态" : "Status")
+              : tab === "usage"
+                ? (locale.startsWith("zh") ? "用量" : "Usage")
+                : tab === "keys"
+                  ? (locale.startsWith("zh") ? "密钥" : "Keys")
+                  : (locale.startsWith("zh") ? "远程" : "Remote")}
+          </button>
+        ))}
+      </nav>
+
+      {/* 3. 分区主体内容 */}
+      <div className="compactTabContent">
+        {/* 状态分区 */}
+        {activeTab === "status" ? (
+          <div className="compactStatusSection">
+            {/* 本地服务配置 */}
+            <div className="compactSettingsCard">
+              <div className="compactCardHeader">
+                <h4>{locale.startsWith("zh") ? "本地服务" : "Local Service"}</h4>
+              </div>
+
+              <div className="compactSettingRow">
+                <span>{proxyCopy.accountCountLabel}</span>
+                <strong>{accountCount}</strong>
+              </div>
+
+              <div className="compactSettingRow">
+                <span>{proxyCopy.defaultStartLabel}</span>
+                <label className="themeSwitch">
+                  <input
+                    type="checkbox"
+                    checked={autoStartEnabled}
+                    disabled={savingSettings}
+                    onChange={(e) => onToggleAutoStart(e.target.checked)}
+                  />
+                  <span className="themeSwitchTrack">
+                    <span className="themeSwitchThumb" />
+                  </span>
+                </label>
+              </div>
+
+              <div className="compactSettingRow">
+                <span>{proxyCopy.portLabel}</span>
+                <input
+                  className="compactPortInput"
+                  inputMode="numeric"
+                  value={portInput}
+                  disabled={busy || status.running}
+                  onChange={(e) => setPortDraft(e.target.value)}
+                  onBlur={() => void persistPortIfNeeded()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void persistPortIfNeeded();
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Codex 接管 */}
+            <div className="compactSettingsCard">
+              <div className="compactCardHeader">
+                <h4>{proxyCopy.codexBindLabel}</h4>
+              </div>
+              <div className="compactSettingRow">
+                <span>
+                  {status.codexProxyBound
+                    ? proxyCopy.codexBindBoundTitle
+                    : proxyCopy.codexBindNormalTitle}
+                </span>
+                <div className="compactRowActionWrap">
+                  <button
+                    type="button"
+                    className="compactBtnGhost"
+                    disabled={!status.codexProxyRestoreAvailable || busy || codexProxyBindingBusy}
+                    onClick={onRestoreCodexProxy}
+                  >
+                    {restoringCodexProxy ? proxyCopy.codexRestoreActionBusy : proxyCopy.codexRestoreAction}
+                  </button>
+                  <button
+                    type="button"
+                    className="compactBtnPrimary"
+                    disabled={
+                      !status.running ||
+                      !status.baseUrl ||
+                      !status.apiKey ||
+                      busy ||
+                      codexProxyBindingBusy ||
+                      status.codexProxyBound
+                    }
+                    onClick={onBindCodexProxy}
+                  >
+                    {bindingCodexProxy ? proxyCopy.codexBindActionBusy : proxyCopy.codexBindAction}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 路由策略 */}
+            <div className="compactSettingsCard">
+              <div className="compactCardHeader">
+                <h4>{proxyCopy.loadBalanceLabel}</h4>
+              </div>
+
+              <div className="compactSettingRow">
+                <div className="compactModeGroup">
+                  <button
+                    type="button"
+                    className={`compactModeBtn${loadBalanceMode === "average" ? " isActive" : ""}`}
+                    onClick={() => void onUpdateLoadBalanceMode("average")}
+                  >
+                    {proxyCopy.loadBalanceAverage}
+                  </button>
+                  <button
+                    type="button"
+                    className={`compactModeBtn${loadBalanceMode === "sequential" ? " isActive" : ""}`}
+                    onClick={() => void onUpdateLoadBalanceMode("sequential")}
+                  >
+                    {proxyCopy.loadBalanceSequential}
+                  </button>
+                </div>
+              </div>
+
+              {loadBalanceMode === "sequential" ? (
+                <div className="compactSettingRow">
+                  <span>{proxyCopy.sequentialFiveHourLimitLabel}</span>
+                  <div className="compactSliderWrap">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={sequentialFiveHourLimitPercent}
+                      onChange={(e) =>
+                        void onUpdateSequentialFiveHourLimitPercent(Number(e.target.value))
+                      }
+                    />
+                    <b>{sequentialFiveHourLimitPercent}%</b>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* 可用模型入口 */}
+              <div
+                className="compactSettingRow compactClickableRow"
+                onClick={() => setSubpage("model-selection")}
+                role="button"
+                tabIndex={0}
+              >
+                <span>{proxyCopy.modelMenuLabel}</span>
+                <b className="compactEntryLink">
+                  {enabledModelCount} / {apiProxySupportedModels.length} ›
+                </b>
+              </div>
+
+              {/* 服务密钥 */}
+              <div className="compactSettingRow">
+                <span>{proxyCopy.apiKeyLabel}</span>
+                <div className="compactRowActionWrap">
+                  <code className="compactMaskedKey">••••••••</code>
+                  <button
+                    type="button"
+                    className="compactMiniBtn"
+                    disabled={!status.apiKey}
+                    onClick={() => copyText(status.apiKey)}
+                  >
+                    {proxyCopy.copy}
+                  </button>
+                  <button
+                    type="button"
+                    className="compactMiniBtn"
+                    disabled={refreshingApiKey}
+                    onClick={onRefreshApiKey}
+                  >
+                    {refreshingApiKey ? "..." : proxyCopy.refreshKey}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 最近错误 */}
+            {status.lastError ? (
+              <div className="compactErrorBanner">
+                <strong>{locale.startsWith("zh") ? "最近错误" : "Recent Error"}</strong>
+                <p>{status.lastError}</p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* 用量分区 */}
+        {activeTab === "usage" ? (
+          <CompactUsageChart
+            stats={apiProxyUsageStats}
+            range={apiProxyUsageRange}
+            metric={apiProxyUsageMetric}
+            loading={apiProxyUsageLoading}
+            clearing={apiProxyUsageClearing}
+            exporting={apiProxyUsageExporting}
+            apiProxyKeys={apiProxyKeys}
+            onSelectRange={onSelectApiProxyUsageRange}
+            onSelectMetric={onSelectApiProxyUsageMetric}
+            onExport={onExportApiProxyUsage}
+            onClear={onClearApiProxyUsageStats}
+          />
+        ) : null}
+
+        {/* 密钥分区 */}
+        {activeTab === "keys" ? (
+          <div className="compactKeysSection">
+            <div className="compactKeysHeader">
+              <span>
+                {proxyCopy.keyManagerTitle} ({apiProxyKeys.length})
+              </span>
+              <button
+                type="button"
+                className="compactBtnPrimary"
+                onClick={() => setSubpage("new-key")}
+              >
+                + {proxyCopy.keyCreateAction}
+              </button>
+            </div>
+
+            <div className="compactKeysList">
+              {apiProxyKeysLoading ? (
+                <div className="compactEmptySection">
+                  <span>{proxyCopy.keyLoading}</span>
+                </div>
+              ) : apiProxyKeys.length === 0 ? (
+                <div className="compactEmptySection">
+                  <span>{proxyCopy.keyEmpty}</span>
+                </div>
+              ) : (
+                apiProxyKeys.map((key) => {
+                  const summary = summarizeApiProxyKeyLogs(apiProxyKeyLogs, key.id);
+                  return (
+                    <div
+                      key={key.id}
+                      className="compactKeyCard"
+                      onClick={() => {
+                        setSelectedKeyId(key.id);
+                        setSubpage("key-detail");
+                      }}
+                    >
+                      <div className="compactKeyCardRow1">
+                        <strong className="compactKeyName">{key.label}</strong>
+                        <div
+                          className="compactKeyCardTrailing"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          {startingCloudflared ? proxyCopy.startingPublic : proxyCopy.startPublic}
-                        </button>
-                      )}
+                          <label className="themeSwitch">
+                            <input
+                              type="checkbox"
+                              checked={key.enabled}
+                              onChange={(e) =>
+                                void onUpdateApiProxyKey({
+                                  id: key.id,
+                                  enabled: e.target.checked,
+                                })
+                              }
+                            />
+                            <span className="themeSwitchTrack">
+                              <span className="themeSwitchThumb" />
+                            </span>
+                          </label>
+                          <span className="compactArrow">›</span>
+                        </div>
+                      </div>
+
+                      <div className="compactKeyCardRow2">
+                        <span>{summary.totalCalls} {locale.startsWith("zh") ? "次" : "calls"}</span>
+                        <span>·</span>
+                        <span>{formatTokenCount(summary.totalTokens, locale)} Tok</span>
+                        <span>·</span>
+                        <span>{formatRemoteHistoryTime(locale, summary.lastUsedAt ? summary.lastUsedAt * 1000 : 0)}</span>
+                      </div>
                     </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {/* 远程分区 */}
+        {activeTab === "remote" ? (
+          <div className="compactRemoteSection">
+            {/* 顶部二级分段切换 */}
+            <div className="compactSubSegmented">
+              <button
+                type="button"
+                className={`compactSubSegmentButton${remoteSubTab === "ssh" ? " isActive" : ""}`}
+                onClick={() => setRemoteSubTab("ssh")}
+              >
+                {locale.startsWith("zh") ? "SSH 服务器" : "SSH Servers"}
+              </button>
+              <button
+                type="button"
+                className={`compactSubSegmentButton${remoteSubTab === "cloudflared" ? " isActive" : ""}`}
+                onClick={() => {
+                  setRemoteSubTab("cloudflared");
+                  onRefreshCloudflared();
+                }}
+              >
+                {proxyCopy.cloudflaredTitle}
+              </button>
+            </div>
+
+            {remoteSubTab === "ssh" ? (
+              <div className="compactSshListSection">
+                <div className="compactKeysHeader">
+                  <span>
+                    {proxyCopy.remoteTitle} ({effectiveRemoteDrafts.length})
+                  </span>
+                  <button
+                    type="button"
+                    className="compactBtnPrimary"
+                    onClick={() => {
+                      const newDraft = createRemoteDraft();
+                      const next = [...effectiveRemoteDrafts, newDraft];
+                      setRemoteDrafts(next);
+                      persistRemoteDrafts(next);
+                      setSelectedRemoteId(newDraft.id);
+                      setSubpage("server-detail");
+                    }}
+                  >
+                    + {proxyCopy.remoteAddServer}
+                  </button>
+                </div>
+
+                <div className="compactServerList">
+                  {effectiveRemoteDrafts.length === 0 ? (
+                    <div className="compactEmptySection">
+                      <span>{proxyCopy.remoteEmptyTitle}</span>
+                    </div>
+                  ) : (
+                    effectiveRemoteDrafts.map((draft) => {
+                      const serverStatus = remoteStatuses[draft.id];
+                      const isRunning = serverStatus?.running ?? false;
+                      const lastChecked = remoteHistory[draft.id] ?? 0;
+
+                      return (
+                        <div
+                          key={draft.id}
+                          className="compactServerCard"
+                          onClick={() => {
+                            setSelectedRemoteId(draft.id);
+                            setSubpage("server-detail");
+                          }}
+                        >
+                          <div className="compactServerCardRow1">
+                            <strong className="compactServerName">
+                              {draft.label || draft.host || "Untitled"}
+                            </strong>
+                            <div className="compactServerCardTrailing">
+                              <span className={`proxyStatusDot${isRunning ? " isRunning" : ""}`} />
+                              <span>{isRunning ? proxyCopy.statusRunning : proxyCopy.statusStopped}</span>
+                              <span className="compactArrow">›</span>
+                            </div>
+                          </div>
+
+                          <div className="compactServerCardRow2">
+                            <span>{draft.sshUser}@{draft.host}:{draft.sshPort}</span>
+                            <span>·</span>
+                            <span>{formatRemoteHistoryTime(locale, lastChecked)}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* 公网访问 (Cloudflared) */
+              <div className="compactCloudflaredSection">
+                {/* 状态徽标 */}
+                <div className="compactDetailBox">
+                  <div className="compactDetailRow">
+                    <span>{proxyCopy.cloudflaredTitle}</span>
+                    <strong>
+                      {cloudflaredStatus.running
+                        ? proxyCopy.statusRunning
+                        : cloudflaredStatus.installed
+                          ? proxyCopy.statusStopped
+                          : proxyCopy.notInstalledLabel}
+                    </strong>
                   </div>
 
-                  <div className="proxyDetailGrid">
-                    <article className="proxyDetailCard">
-                      <span className="proxyLabel">{proxyCopy.publicStatusLabel}</span>
-                      <strong className={`proxyStatus${cloudflaredStatus.running ? " isRunning" : ""}`}>
-                        {cloudflaredStatus.running
-                          ? proxyCopy.publicStatusRunning
-                          : proxyCopy.publicStatusStopped}
-                      </strong>
-                      <p>
-                        {cloudflaredStatus.running
-                          ? proxyCopy.publicStatusRunningDescription
-                          : proxyCopy.publicStatusStoppedDescription}
-                      </p>
-                    </article>
-
-                    <article className="proxyDetailCard">
-                      <div className="proxyDetailHeader">
-                        <span className="proxyLabel">{proxyCopy.publicUrlLabel}</span>
+                  {cloudflaredStatus.publicUrl ? (
+                    <div className="compactDetailRow">
+                      <span>{locale.startsWith("zh") ? "公开地址" : "Public URL"}</span>
+                      <div className="compactCopyValueWrap">
+                        <code>{cloudflaredStatus.publicUrl}</code>
                         <button
-                          className="ghost proxyCopyButton"
+                          type="button"
+                          className="compactMiniBtn"
                           onClick={() => copyText(cloudflaredStatus.publicUrl)}
-                          disabled={!cloudflaredStatus.publicUrl}
                         >
                           {proxyCopy.copy}
                         </button>
                       </div>
-                      <code>{cloudflaredStatus.publicUrl ?? proxyCopy.baseUrlPlaceholder}</code>
-                    </article>
+                    </div>
+                  ) : null}
+                </div>
 
-                    <article className="proxyDetailCard">
-                      <span className="proxyLabel">{proxyCopy.installPathLabel}</span>
-                      <code>{cloudflaredStatus.binaryPath ?? proxyCopy.notDetected}</code>
-                    </article>
-
-                    <article className="proxyDetailCard">
-                      <span className="proxyLabel">{proxyCopy.lastErrorLabel}</span>
-                      <p className="proxyErrorText">{cloudflaredStatus.lastError ?? proxyCopy.none}</p>
-                    </article>
+                {!cloudflaredStatus.installed ? (
+                  <div className="compactInstallCard">
+                    <p>{proxyCopy.installDescription}</p>
+                    <button
+                      type="button"
+                      className="compactBtnPrimary"
+                      disabled={cloudflaredBusy}
+                      onClick={onInstallCloudflared}
+                    >
+                      {installingCloudflared
+                        ? proxyCopy.installing
+                        : proxyCopy.installButton}
+                    </button>
                   </div>
-                </>
-              )}
-            </div>
-          ) : null}
-        </section>
+                ) : (
+                  <div className="compactCloudflaredForm">
+                    {/* 隧道模式选择 */}
+                    <div className="compactModeGroup">
+                      <button
+                        type="button"
+                        className={`compactModeBtn${tunnelMode === "quick" ? " isActive" : ""}`}
+                        onClick={() => setTunnelMode("quick")}
+                      >
+                        {proxyCopy.quickModeLabel}
+                      </button>
+                      <button
+                        type="button"
+                        className={`compactModeBtn${tunnelMode === "named" ? " isActive" : ""}`}
+                        onClick={() => setTunnelMode("named")}
+                      >
+                        {proxyCopy.namedModeLabel}
+                      </button>
+                    </div>
+
+                    {tunnelMode === "named" ? (
+                      <div className="compactFormGrid">
+                        <label className="compactFormField">
+                          <span>{proxyCopy.apiTokenLabel}</span>
+                          <div className="compactPasswordWrap">
+                            <input
+                              type={showTunnelSecrets ? "text" : "password"}
+                              className="compactInput"
+                              value={namedInput.apiToken}
+                              onChange={(e) =>
+                                setNamedInput((s) => ({ ...s, apiToken: e.target.value }))
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="compactMiniBtn"
+                              onClick={() => setShowTunnelSecrets((s) => !s)}
+                            >
+                              {showTunnelSecrets ? (locale.startsWith("zh") ? "隐藏" : "显示") : (locale.startsWith("zh") ? "显示" : "Show")}
+                            </button>
+                          </div>
+                        </label>
+
+                        <label className="compactFormField">
+                          <span>{proxyCopy.accountIdLabel}</span>
+                          <input
+                            type={showTunnelSecrets ? "text" : "password"}
+                            className="compactInput"
+                            value={namedInput.accountId}
+                            onChange={(e) =>
+                              setNamedInput((s) => ({ ...s, accountId: e.target.value }))
+                            }
+                          />
+                        </label>
+
+                        <label className="compactFormField">
+                          <span>{proxyCopy.zoneIdLabel}</span>
+                          <input
+                            type={showTunnelSecrets ? "text" : "password"}
+                            className="compactInput"
+                            value={namedInput.zoneId}
+                            onChange={(e) =>
+                              setNamedInput((s) => ({ ...s, zoneId: e.target.value }))
+                            }
+                          />
+                        </label>
+
+                        <label className="compactFormField">
+                          <span>{proxyCopy.hostnameLabel}</span>
+                          <input
+                            type="text"
+                            className="compactInput"
+                            placeholder="api.example.com"
+                            value={namedInput.hostname}
+                            onChange={(e) =>
+                              setNamedInput((s) => ({ ...s, hostname: e.target.value }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+
+                    {/* 折叠高级网络选项 */}
+                    <div className="compactAccordionItem">
+                      <button
+                        type="button"
+                        className="compactAccordionHeader"
+                        onClick={() => setAdvancedNetworkOpen((o) => !o)}
+                      >
+                        <span>{locale.startsWith("zh") ? "高级网络选项" : "Advanced Network"}</span>
+                        <b>{advancedNetworkOpen ? "▲" : "▼"}</b>
+                      </button>
+                      {advancedNetworkOpen ? (
+                        <div className="compactAccordionContent">
+                          <label className="compactModelItem">
+                            <input
+                              type="checkbox"
+                              checked={useHttp2}
+                              onChange={(e) => setUseHttp2(e.target.checked)}
+                            />
+                            <span className="compactModelName">{proxyCopy.useHttp2}</span>
+                          </label>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* 启动 / 停止主按钮 */}
+                    <div className="compactCloudflaredActions">
+                      {cloudflaredStatus.running ? (
+                        <button
+                          type="button"
+                          className="compactBtnDanger"
+                          disabled={cloudflaredBusy}
+                          onClick={onStopCloudflared}
+                        >
+                          {stoppingCloudflared
+                            ? proxyCopy.stoppingPublic
+                            : proxyCopy.stopPublic}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="compactBtnPrimary"
+                          disabled={
+                            cloudflaredBusy ||
+                            !status.running ||
+                            status.port === null ||
+                            (tunnelMode === "named" &&
+                              (!namedInput.apiToken ||
+                                !namedInput.accountId ||
+                                !namedInput.zoneId ||
+                                !namedInput.hostname))
+                          }
+                          onClick={() => {
+                            if (status.port === null) return;
+                            onStartCloudflared({
+                              apiProxyPort: status.port,
+                              useHttp2,
+                              mode: tunnelMode,
+                              named:
+                                tunnelMode === "named"
+                                  ? {
+                                      apiToken: namedInput.apiToken.trim(),
+                                      accountId: namedInput.accountId.trim(),
+                                      zoneId: namedInput.zoneId.trim(),
+                                      hostname: namedInput.hostname.trim(),
+                                    }
+                                  : null,
+                            });
+                          }}
+                        >
+                          {startingCloudflared
+                            ? proxyCopy.startingPublic
+                            : proxyCopy.startPublic}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
     </section>
   );
