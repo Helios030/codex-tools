@@ -216,7 +216,7 @@ function getUiCopy(locale: string): UiCopy {
       fiveHourUsage: "5小时使用率",
       weekUsage: "周使用率",
       remainingSuffix: (value) => `剩余 ${value}`,
-      resetTime: "重置时间",
+      resetTime: "额度恢复时间",
       resetCreditsTitle: "重置卡",
       resetCreditsAvailable: (count) => (count === null ? "可用数量未知" : `可用 ${count} 张`),
       resetCreditsExpiresAt: "过期时间（系统本地时间）",
@@ -335,15 +335,20 @@ function UsageMeter({
   label,
   window,
   text,
+  locale,
+  showResetTime = true,
   className,
 }: {
   label: string;
   window: UsageWindow | null;
   text: UiCopy;
+  locale?: string;
+  showResetTime?: boolean;
   className?: string;
 }) {
   const remaining = remainingPercent(window);
   const tone = remaining !== null && remaining <= 0 ? "danger" : remaining !== null && remaining < 15 ? "warning" : "normal";
+  const resetVal = locale ? formatResetValue(window?.resetAt, locale, text.emptyValue) : null;
 
   return (
     <div className={`usageMeter tone-${tone}${className ? ` ${className}` : ""}`}>
@@ -354,6 +359,11 @@ function UsageMeter({
       <div className="usageBar" aria-hidden="true">
         <span style={{ width: toProgressWidth(remaining) }} />
       </div>
+      {showResetTime && resetVal ? (
+        <div className="usageMeterFoot">
+          <span>{text.resetTime}: {resetVal}</span>
+        </div>
+      ) : null}
       <span className="visuallyHidden">
         {label} {text.remainingSuffix(percent(remaining))}
       </span>
@@ -558,7 +568,6 @@ export function AccountsGrid({
   switchingId,
   warmingAccountId,
   renamingAccountId,
-  pendingDeleteId: _pendingDeleteId,
   onExportAll,
   onExport,
   onReauthorize,
@@ -827,128 +836,244 @@ export function AccountsGrid({
                 return (
                   <article
                     key={row.id}
-                    className={`accountRow status-${status}${dualArc ? " isDualArc" : ""}${isSelected ? " isSelected" : ""}`}
-                    onClick={(event) => {
-                      detailTriggerRef.current = event.currentTarget;
-                      setSelectedAccountId(account.id);
-                      setDetailOpen(true);
+                    data-account-id={account.id}
+                    className={`accountRow card status-${status}${dualArc ? " isDualArc" : ""}${isSelected ? " isSelected" : ""}`}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${account.label}: ${statusLabel(status, text)}`}
+                    onClick={() => selectAccount(account.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectAccount(account.id);
+                      }
                     }}
                   >
-                    <div className="accountIdentityCell">
-                      <span className={`accountAvatar tone-${planTone(normalizedPlan)}`}>
-                        {accountInitial(account)}
-                      </span>
-                      <span className="accountIdentityText">
-                        <span className="accountTitleLine">
-                          {row.variants.map((variant) => {
-                            const plan = formatPlan(
-                              variant.planType || variant.usage?.planType,
-                              copy.accountCard.planLabels,
-                            );
-                            const isVariantSelected = variant.id === account.id;
-
-                            return (
+                    {dualArc ? (
+                      <>
+                        <div className="accountMain">
+                          <div className="accountHeader">
+                            <div className="accountTitleLine">
                               <button
-                                key={variant.id}
                                 type="button"
-                                className={`planChip tone-${planTone(variant.planType || variant.usage?.planType)}${
-                                  isVariantSelected ? " isSelected" : ""
-                                }`}
+                                className="accountNameButton"
+                                title={accountAddress}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  selectVariant(row.id, variant);
+                                  selectAccount(account.id);
                                 }}
-                                aria-pressed={isVariantSelected}
                               >
-                              {plan}
-                            </button>
-                          );
-                          })}
+                                {account.label || accountAddress}
+                              </button>
+                            </div>
+                            <div className="accountStateLine">
+                              {row.variants.map((variant) => {
+                                const plan = formatPlan(
+                                  variant.planType || variant.usage?.planType,
+                                  copy.accountCard.planLabels,
+                                );
+                                const isVariantSelected = variant.id === account.id;
+
+                                return (
+                                  <button
+                                    key={variant.id}
+                                    type="button"
+                                    className={`planChip tone-${planTone(variant.planType || variant.usage?.planType)}${
+                                      isVariantSelected ? " isSelected" : ""
+                                    }`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      selectVariant(row.id, variant);
+                                    }}
+                                    aria-pressed={isVariantSelected}
+                                  >
+                                    {plan}
+                                  </button>
+                                );
+                              })}
+                              <span
+                                className={`statusText status-${status}`}
+                                title={`${status === "issue" ? (issueReason ?? text.issueFallbackReason) : statusLabel(status, text)}${
+                                  account.usage?.fetchedAt
+                                    ? ` · ${copy.accountsGrid.usageUpdatedAt(formatResetValue(account.usage.fetchedAt, locale, text.emptyValue))}`
+                                    : ""
+                                }`}
+                              >
+                                <span className="statusDot" />
+                                <span className="statusLabel">{statusLabel(status, text)}</span>
+                                {status === "issue" ? (
+                                  <span className="statusReason">{issueReason ?? text.issueFallbackReason}</span>
+                                ) : null}
+                              </span>
+                              <UsageFreshnessBadge
+                                account={account}
+                                refreshing={usageRefreshing}
+                                showInitialRefresh={showInitialUsageRefresh}
+                                refreshError={usageRefreshError}
+                                locale={locale}
+                                copy={copy.accountsGrid}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="accountQuotaList">
+                            {[{ window: account.usage?.oneWeek ?? null, label: copy.accountsGrid.weekRemaining, cycle: "Week" },
+                              { window: account.usage?.fiveHour ?? null, label: copy.accountsGrid.fiveHourRemaining, cycle: "Five" }].map(({ window: quota, label, cycle }) => {
+                              const value = remainingPercent(quota);
+                              const resetVal = formatResetValue(quota?.resetAt, locale, text.emptyValue);
+                              const hasReset = resetVal && resetVal !== text.emptyValue;
+                              return (
+                                <div
+                                  key={cycle}
+                                  className={`accountQuotaItem quota${cycle}${value !== null && value <= 0 ? " isEmpty" : value !== null && value < 15 ? " isLow" : ""}`}
+                                  role="progressbar"
+                                  aria-label={label}
+                                  aria-valuemin={0}
+                                  aria-valuemax={100}
+                                  aria-valuenow={value !== null && Number.isFinite(value) ? value : undefined}
+                                  aria-valuetext={value === 0 ? `${percent(value)} ${text.statusExhausted}` : percent(value)}
+                                >
+                                  <div className="quotaTitle">
+                                    <span className="quotaDot" aria-hidden="true" />
+                                    <span className="quotaLabel">{label}</span>
+                                  </div>
+                                  <strong className="quotaPercent">
+                                    {value === null || !Number.isFinite(value) ? "—" : percent(value)}{value === 0 ? ` · ${text.statusExhausted}` : ""}
+                                  </strong>
+                                  {hasReset ? (
+                                    <div className="quotaFoot">
+                                      <span className="quotaResetTime">{resetVal} 恢复</span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <QuotaArc
+                          week={remainingPercent(account.usage?.oneWeek ?? null)}
+                          fiveHour={remainingPercent(account.usage?.fiveHour ?? null)}
+                          current={account.isCurrent && completedSwitch.accountId === account.id}
+                          switching={switchingId !== null}
+                          startupSequence={completedSwitch.sequence}
+                        >
                           <button
                             type="button"
-                            className="accountNameButton"
-                            title={accountAddress}
+                            className={`quotaStartButton${account.isCurrent ? " isCurrent" : ""}`}
+                            disabled={authBusy || account.isCurrent}
+                            aria-busy={isSwitching}
+                            aria-label={`${isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : status === "issue" ? text.reauthorize : text.switchAccount}: ${accountAddress}`}
+                            title={`${isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : status === "issue" ? text.reauthorize : text.switchAccount}\n${copy.accountsGrid.weekRemaining}: ${percent(remainingPercent(account.usage?.oneWeek ?? null))}\n${copy.accountsGrid.fiveHourRemaining}: ${percent(remainingPercent(account.usage?.fiveHour ?? null))}\n${text.resetTime}: ${formatFullDate(account.usage?.oneWeek?.resetAt, locale, text.emptyValue)} / ${formatFullDate(account.usage?.fiveHour?.resetAt, locale, text.emptyValue)}`}
                             onClick={(event) => {
                               event.stopPropagation();
-                              selectAccount(account.id);
+                              if (status === "issue") onReauthorize(account);
+                              else void handleSwitch(account, event.timeStamp);
                             }}
                           >
-                            {dualArc ? account.label || accountAddress : accountAddress}
+                            <QuotaPowerIcon busy={isSwitching} authorization={status === "issue" && !account.isCurrent} />
                           </button>
-                        </span>
-                        <span className="accountStateLine">
-                          <span
-                            className={`statusText status-${status}`}
-                            title={status === "issue" ? (issueReason ?? text.issueFallbackReason) : statusLabel(status, text)}
-                          >
-                            <span className="statusDot" />
-                            <span className="statusLabel">{statusLabel(status, text)}</span>
-                            {status === "issue" ? (
-                              <span className="statusReason">{issueReason ?? text.issueFallbackReason}</span>
-                            ) : null}
+                        </QuotaArc>
+                      </>
+                    ) : (
+                      <>
+                        <div className="accountIdentityCell">
+                          <span className={`accountAvatar tone-${planTone(normalizedPlan)}`}>
+                            {accountInitial(account)}
                           </span>
-                          <UsageFreshnessBadge
-                            account={account}
-                            refreshing={usageRefreshing}
-                            showInitialRefresh={showInitialUsageRefresh}
-                            refreshError={usageRefreshError}
-                            locale={locale}
-                            copy={copy.accountsGrid}
-                          />
-                        </span>
-                      </span>
-                    </div>
-                    {dualArc ? <>
-                      {[{ window: account.usage?.oneWeek ?? null, label: copy.accountsGrid.weekRemaining, cycle: "Week" },
-                        { window: account.usage?.fiveHour ?? null, label: copy.accountsGrid.fiveHourRemaining, cycle: "Five" }].map(({ window: quota, label, cycle }) => {
-                        const value = remainingPercent(quota);
-                        return <div key={cycle} className={`quotaNumeric quotaNumeric${cycle}${value !== null && value <= 0 ? " isEmpty" : value !== null && value < 15 ? " isLow" : ""}`}
-                          role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
-                          aria-valuenow={value !== null && Number.isFinite(value) ? value : undefined}
-                          aria-valuetext={value === 0 ? `${percent(value)} ${text.statusExhausted}` : percent(value)}>
-                          <span>{label}</span><strong>{value === null || !Number.isFinite(value) ? "—" : percent(value)}{value === 0 ? ` · ${text.statusExhausted}` : ""}</strong>
-                        </div>;
-                      })}
-                      <QuotaArc week={remainingPercent(account.usage?.oneWeek ?? null)}
-                        fiveHour={remainingPercent(account.usage?.fiveHour ?? null)} current={account.isCurrent && completedSwitch.accountId === account.id} switching={switchingId !== null}
-                        startupSequence={completedSwitch.sequence}>
-                        <button type="button" className={`quotaStartButton${account.isCurrent ? " isCurrent" : ""}`}
-                          disabled={authBusy || account.isCurrent} aria-busy={isSwitching}
-                          aria-label={`${isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : status === "issue" ? text.reauthorize : text.switchAccount}: ${accountAddress}`}
-                          title={`${isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : status === "issue" ? text.reauthorize : text.switchAccount}\n${copy.accountsGrid.weekRemaining}: ${percent(remainingPercent(account.usage?.oneWeek ?? null))}\n${copy.accountsGrid.fiveHourRemaining}: ${percent(remainingPercent(account.usage?.fiveHour ?? null))}\n${text.resetTime}: ${formatFullDate(account.usage?.oneWeek?.resetAt, locale, text.emptyValue)} / ${formatFullDate(account.usage?.fiveHour?.resetAt, locale, text.emptyValue)}`}
-                          onClick={(event) => { event.stopPropagation(); if (status === "issue") onReauthorize(account); else void handleSwitch(account, event.timeStamp); }}>
-                          <QuotaPowerIcon busy={isSwitching} authorization={status === "issue" && !account.isCurrent} />
-                        </button>
-                      </QuotaArc>
-                    </> : <>
-                    <UsageMeter
-                      className="accountUsageFive"
-                      label={copy.accountsGrid.fiveHourRemaining}
-                      window={account.usage?.fiveHour ?? null}
-                      text={text}
-                    />
-                    <UsageMeter
-                      className="accountUsageWeek"
-                      label={copy.accountsGrid.weekRemaining}
-                      window={account.usage?.oneWeek ?? null}
-                      text={text}
-                    />
-                    </>}
-                    {!dualArc ? (
-                      <div className="rowActions">
-                        <button
-                          type="button"
-                          className="rowSwitchButton"
-                          disabled={switchDisabled || account.isCurrent}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void handleSwitch(account, event.timeStamp);
-                          }}
-                        >
-                          {isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : text.switchAccount}
-                        </button>
-                      </div>
-                    ) : null}
+                          <span className="accountIdentityText">
+                            <span className="accountTitleLine">
+                              {row.variants.map((variant) => {
+                                const plan = formatPlan(
+                                  variant.planType || variant.usage?.planType,
+                                  copy.accountCard.planLabels,
+                                );
+                                const isVariantSelected = variant.id === account.id;
+
+                                return (
+                                  <button
+                                    key={variant.id}
+                                    type="button"
+                                    className={`planChip tone-${planTone(variant.planType || variant.usage?.planType)}${
+                                      isVariantSelected ? " isSelected" : ""
+                                    }`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      selectVariant(row.id, variant);
+                                    }}
+                                    aria-pressed={isVariantSelected}
+                                  >
+                                    {plan}
+                                  </button>
+                                );
+                              })}
+                              <button
+                                type="button"
+                                className="accountNameButton"
+                                title={accountAddress}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  selectAccount(account.id);
+                                }}
+                              >
+                                {accountAddress}
+                              </button>
+                            </span>
+                            <span className="accountStateLine">
+                              <span
+                                className={`statusText status-${status}`}
+                                title={`${status === "issue" ? (issueReason ?? text.issueFallbackReason) : statusLabel(status, text)}${
+                                  account.usage?.fetchedAt
+                                    ? ` · ${copy.accountsGrid.usageUpdatedAt(formatResetValue(account.usage.fetchedAt, locale, text.emptyValue))}`
+                                    : ""
+                                }`}
+                              >
+                                <span className="statusDot" />
+                                <span className="statusLabel">{statusLabel(status, text)}</span>
+                                {status === "issue" ? (
+                                  <span className="statusReason">{issueReason ?? text.issueFallbackReason}</span>
+                                ) : null}
+                              </span>
+                              <UsageFreshnessBadge
+                                account={account}
+                                refreshing={usageRefreshing}
+                                showInitialRefresh={showInitialUsageRefresh}
+                                refreshError={usageRefreshError}
+                                locale={locale}
+                                copy={copy.accountsGrid}
+                              />
+                            </span>
+                          </span>
+                        </div>
+                        <UsageMeter
+                          className="accountUsageFive"
+                          label={copy.accountsGrid.fiveHourRemaining}
+                          window={account.usage?.fiveHour ?? null}
+                          text={text}
+                          locale={locale}
+                        />
+                        <UsageMeter
+                          className="accountUsageWeek"
+                          label={copy.accountsGrid.weekRemaining}
+                          window={account.usage?.oneWeek ?? null}
+                          text={text}
+                          locale={locale}
+                        />
+                        <div className="rowActions">
+                          <button
+                            type="button"
+                            className="rowSwitchButton"
+                            disabled={switchDisabled || account.isCurrent}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleSwitch(account, event.timeStamp);
+                            }}
+                          >
+                            {isSwitching ? copy.accountCard.launching : account.isCurrent ? text.statusUsing : text.switchAccount}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </article>
                 );
                 })}
@@ -1054,11 +1179,15 @@ export function AccountsGrid({
                 label={copy.accountsGrid.fiveHourRemaining}
                 window={selectedRow.account.usage?.fiveHour ?? null}
                 text={text}
+                locale={locale}
+                showResetTime={false}
               />
               <UsageMeter
                 label={copy.accountsGrid.weekRemaining}
                 window={selectedRow.account.usage?.oneWeek ?? null}
                 text={text}
+                locale={locale}
+                showResetTime={false}
               />
             </section>
 

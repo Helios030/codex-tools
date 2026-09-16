@@ -287,9 +287,27 @@ export function SettingsPanel({
             </div>
             <div className="quotaStylePreview" role="group" aria-label={copy.settings.theme.quotaPreview}>
               <div className="quotaPreviewValues">
-                <span className="quotaNumeric quotaNumericWeek">{copy.accountsGrid.weekRemaining}<strong>89%</strong></span>
+                <div className="accountQuotaItem quotaWeek">
+                  <div className="quotaTitle">
+                    <span className="quotaDot" aria-hidden="true" />
+                    <span className="quotaLabel">{copy.accountsGrid.weekRemaining}</span>
+                  </div>
+                  <strong className="quotaPercent">89%</strong>
+                  <div className="quotaFoot">
+                    <span className="quotaResetTime">09/20 18:00 恢复</span>
+                  </div>
+                </div>
                 {quotaDisplayMode === "bars" ? <div className="usageBar"><span style={{ width: "89%" }} /></div> : null}
-                <span className="quotaNumeric quotaNumericFive">{copy.accountsGrid.fiveHourRemaining}<strong>59%</strong></span>
+                <div className="accountQuotaItem quotaFive">
+                  <div className="quotaTitle">
+                    <span className="quotaDot" aria-hidden="true" />
+                    <span className="quotaLabel">{copy.accountsGrid.fiveHourRemaining}</span>
+                  </div>
+                  <strong className="quotaPercent">59%</strong>
+                  <div className="quotaFoot">
+                    <span className="quotaResetTime">09/16 16:42 恢复</span>
+                  </div>
+                </div>
                 {quotaDisplayMode === "bars" ? <div className="usageBar"><span style={{ width: "59%" }} /></div> : null}
               </div>
               {quotaDisplayMode === "dualArc" ? <QuotaArc week={89} fiveHour={59}><span className="quotaStartButton isCurrent" aria-hidden="true"><QuotaPowerIcon /></span></QuotaArc> : null}

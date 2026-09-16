@@ -181,10 +181,6 @@ pub(crate) fn tray_current_label(locale: AppLocale) -> &'static str {
     text(locale, &["tray", "currentLabel"])
 }
 
-pub(crate) fn tray_current_account_label(locale: AppLocale) -> &'static str {
-    text(locale, &["tray", "currentAccountLabel"])
-}
-
 pub(crate) fn tray_no_current(locale: AppLocale) -> &'static str {
     text(locale, &["tray", "noCurrent"])
 }
@@ -237,17 +233,6 @@ pub(crate) fn app_menu_settings(locale: AppLocale) -> String {
     format!("{}...", text(locale, &["settings", "title"]))
 }
 
-pub(crate) fn tray_switching_to(locale: AppLocale, label: &str) -> String {
-    let tpl = match locale {
-        AppLocale::ZhCn => "正在切换到 {{label}}...",
-        AppLocale::JaJp => "{{label}} に切り替え中...",
-        AppLocale::KoKr => "{{label}}(으)로 전환 중...",
-        AppLocale::RuRu => "Переключение на {{label}}...",
-        AppLocale::EnUs => "Switching to {{label}}...",
-    };
-    fill_template(tpl, &[("label", label.to_string())])
-}
-
 pub(crate) fn tray_switch_failed(locale: AppLocale, error: &str) -> String {
     let tpl = match locale {
         AppLocale::ZhCn => "⚠️ 切换失败: {{error}}",
@@ -267,35 +252,4 @@ pub(crate) fn tray_view_details(locale: AppLocale) -> &'static str {
         AppLocale::RuRu => "Открыть главное окно для подробностей",
         AppLocale::EnUs => "Open main window for details",
     }
-}
-
-pub(crate) fn tray_switch_action_prefix(locale: AppLocale) -> &'static str {
-    match locale {
-        AppLocale::ZhCn => "切换联动",
-        AppLocale::JaJp => "切り替えアクション",
-        AppLocale::KoKr => "전환 시 실행",
-        AppLocale::RuRu => "Действия при переключении",
-        AppLocale::EnUs => "On switch",
-    }
-}
-
-pub(crate) fn tray_action_launch_codex(locale: AppLocale) -> &'static str {
-    match locale {
-        AppLocale::ZhCn => "启动 Codex",
-        AppLocale::JaJp => "Codex を起動",
-        AppLocale::KoKr => "Codex 실행",
-        AppLocale::RuRu => "Запуск Codex",
-        AppLocale::EnUs => "Launch Codex",
-    }
-}
-
-pub(crate) fn tray_action_restart_editors(locale: AppLocale, editors: &str) -> String {
-    let tpl = match locale {
-        AppLocale::ZhCn => "重启 {{editors}}",
-        AppLocale::JaJp => "{{editors}} を再起動",
-        AppLocale::KoKr => "{{editors}} 재시작",
-        AppLocale::RuRu => "Перезапуск {{editors}}",
-        AppLocale::EnUs => "Restart {{editors}}",
-    };
-    fill_template(tpl, &[("editors", editors.to_string())])
 }

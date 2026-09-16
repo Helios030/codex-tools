@@ -276,7 +276,6 @@
   "tray": {
     "usageHeading": "Codex Tools 사용량",
     "currentLabel": "현재",
-    "currentAccountLabel": "현재 계정",
     "noCurrent": "현재 사용 중인 계정을 찾을 수 없습니다",
     "noAccounts": "계정이 없습니다. 먼저 메인 창에서 계정을 추가하세요",
     "allAccounts": "전체 계정({{count}}):",

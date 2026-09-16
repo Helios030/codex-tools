@@ -276,7 +276,6 @@
   "tray": {
     "usageHeading": "Codex Tools Usage",
     "currentLabel": "Current",
-    "currentAccountLabel": "Current account",
     "noCurrent": "No active account detected",
     "noAccounts": "No accounts yet. Add one in the main window first",
     "allAccounts": "All accounts ({{count}}):",

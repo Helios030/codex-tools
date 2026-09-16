@@ -276,7 +276,6 @@
   "tray": {
     "usageHeading": "Использование Codex Tools",
     "currentLabel": "Текущий",
-    "currentAccountLabel": "Текущий аккаунт",
     "noCurrent": "Активный аккаунт не обнаружен",
     "noAccounts": "Аккаунтов пока нет. Сначала добавьте их в главном окне",
     "allAccounts": "Все аккаунты ({{count}}):",

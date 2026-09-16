@@ -35,16 +35,181 @@
 .metaWarning { color: var(--warning); }
 .metaError { color: var(--danger); }
 
-.accountRow.isDualArc { grid-template-columns: minmax(0, 1fr) 126px; gap: 8px 12px; }
-.isDualArc .accountIdentityCell { grid-column: 1; grid-row: 1; display: block; padding-right: 0; }
-.isDualArc .accountAvatar { display: none; }
-.isDualArc .accountIdentityText { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.isDualArc .accountTitleLine { display: contents; }
-.isDualArc .accountNameButton { order: -1; flex-basis: 100%; }
-.isDualArc .accountStateLine { flex: 1; min-width: 0; flex-wrap: wrap; overflow-wrap: anywhere; }
-.isDualArc > .quotaNumericWeek { grid-column: 1; grid-row: 2; }
-.isDualArc > .quotaNumericFive { grid-column: 1; grid-row: 3; }
-.isDualArc > .quotaArc { grid-column: 2; grid-row: 1 / 4; }
+.accountRow.isDualArc {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 126px;
+  gap: 12px 18px;
+  align-items: center;
+  padding: 16px 18px;
+  border-radius: 12px;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.accountRow.isDualArc:hover {
+  border-color: color-mix(in srgb, var(--brand) 30%, var(--line));
+  background: var(--surface-hover-bg);
+}
+
+.accountRow.isDualArc.isCurrent {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--line));
+}
+
+.isDualArc .accountMain {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.isDualArc .accountHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.isDualArc .accountTitleLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.isDualArc .accountNameButton {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1.3;
+}
+
+.isDualArc .accountNameButton:hover {
+  color: var(--brand);
+}
+
+.isDualArc .accountStateLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--subtle);
+  flex-wrap: wrap;
+}
+
+.isDualArc .accountQuotaList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountQuotaItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 8px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-1) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.accountQuotaItem:hover {
+  background: color-mix(in srgb, var(--bg-1) 85%, transparent);
+  border-color: color-mix(in srgb, var(--line) 90%, transparent);
+}
+
+.accountQuotaItem::before {
+  display: none !important;
+}
+
+.accountQuotaItem.quotaWeek {
+  --quota-color: var(--quota-week);
+}
+
+.accountQuotaItem.quotaFive {
+  --quota-color: var(--quota-five);
+}
+
+.quotaTitle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.quotaDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--quota-color);
+  flex-shrink: 0;
+}
+
+.quotaLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--subtle);
+  white-space: nowrap;
+}
+
+.quotaPercent {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.15;
+  margin: 3px 0 2px;
+  letter-spacing: -0.02em;
+  width: 100%;
+}
+
+.quotaFoot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  width: 100%;
+}
+
+.quotaResetTime {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.accountQuotaItem.isLow .quotaPercent {
+  color: var(--warning);
+}
+.accountQuotaItem.isLow .quotaDot {
+  background-color: var(--warning);
+}
+
+.accountQuotaItem.isEmpty .quotaPercent {
+  color: var(--danger);
+}
+.accountQuotaItem.isEmpty .quotaDot {
+  background-color: var(--danger);
+}
+
 .quotaNumeric { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--subtle); font-size: 12px; }
 .quotaNumeric::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--quota-color); }
 .quotaNumericWeek { --quota-color: var(--quota-week); }

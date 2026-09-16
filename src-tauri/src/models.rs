@@ -671,20 +671,6 @@ pub(crate) enum EditorAppId {
     Qoder,
 }
 
-impl EditorAppId {
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            Self::Vscode => "VS Code",
-            Self::VscodeInsiders => "VS Code Insiders",
-            Self::Cursor => "Cursor",
-            Self::Antigravity => "Antigravity",
-            Self::Kiro => "Kiro",
-            Self::Trae => "Trae",
-            Self::Qoder => "Qoder",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) enum AppLocale {
     #[default]

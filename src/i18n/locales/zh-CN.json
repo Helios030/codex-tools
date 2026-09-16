@@ -155,7 +155,7 @@
     "deleteConfirm": "再次点击确认删除账号",
     "used": "已用",
     "remaining": "剩余",
-    "resetAt": "重置时间",
+    "resetAt": "额度恢复时间",
     "credits": "Credits",
     "unlimited": "无限制",
     "fiveHourFallback": "5h",
@@ -276,7 +276,6 @@
   "tray": {
     "usageHeading": "Codex Tools 用量",
     "currentLabel": "当前",
-    "currentAccountLabel": "当前账号",
     "noCurrent": "未检测到正在使用的账号",
     "noAccounts": "暂无账号，请先在主窗口添加账号",
     "allAccounts": "全部账号（{{count}}）:",

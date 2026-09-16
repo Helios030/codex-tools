@@ -433,6 +433,212 @@ fn tray_account_usage_line(
     )
 }
 
+#[cfg(target_os = "macos")]
+fn tray_reset_pending(locale: crate::models::AppLocale) -> &'static str {
+    use crate::models::AppLocale;
+
+    match locale {
+        AppLocale::ZhCn => "待额度更新",
+        AppLocale::JaJp => "更新待ち",
+        AppLocale::KoKr => "업데이트 대기",
+        AppLocale::RuRu => "ожидает обновления",
+        AppLocale::EnUs => "pending update",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn tray_reset_unknown(locale: crate::models::AppLocale) -> &'static str {
+    use crate::models::AppLocale;
+
+    match locale {
+        AppLocale::ZhCn => "恢复时间未知",
+        AppLocale::JaJp => "回復時刻不明",
+        AppLocale::KoKr => "복구 시간 알 수 없음",
+        AppLocale::RuRu => "время восстановления неизвестно",
+        AppLocale::EnUs => "recovery time unknown",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn format_five_hour_recovery(
+    reset_at: Option<i64>,
+    now: i64,
+    locale: crate::models::AppLocale,
+) -> String {
+    use crate::models::AppLocale;
+
+    let Some(reset_at) = reset_at else {
+        return tray_reset_unknown(locale).to_string();
+    };
+    let remaining = reset_at - now;
+    if remaining <= 0 {
+        return tray_reset_pending(locale).to_string();
+    }
+
+    let hours = remaining / 3_600;
+    let minutes = (remaining % 3_600) / 60;
+    match locale {
+        AppLocale::ZhCn => match (hours, minutes) {
+            (0, 0) => "即将恢复".to_string(),
+            (0, minutes) => format!("{minutes} 分后恢复"),
+            (hours, 0) => format!("{hours} 小时后恢复"),
+            _ => format!("{hours} 小时 {minutes} 分后恢复"),
+        },
+        AppLocale::JaJp => format!("あと {hours} 時間 {minutes} 分"),
+        AppLocale::KoKr => format!("{hours}시간 {minutes}분 후"),
+        AppLocale::RuRu => format!("через {hours} ч {minutes} мин"),
+        AppLocale::EnUs => format!("recovers in {hours}h {minutes}m"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn localized_weekday(
+    weekday: time::Weekday,
+    locale: crate::models::AppLocale,
+) -> &'static str {
+    use crate::models::AppLocale;
+    use time::Weekday;
+
+    match locale {
+        AppLocale::ZhCn => match weekday {
+            Weekday::Monday => "周一",
+            Weekday::Tuesday => "周二",
+            Weekday::Wednesday => "周三",
+            Weekday::Thursday => "周四",
+            Weekday::Friday => "周五",
+            Weekday::Saturday => "周六",
+            Weekday::Sunday => "周日",
+        },
+        AppLocale::JaJp => match weekday {
+            Weekday::Monday => "月",
+            Weekday::Tuesday => "火",
+            Weekday::Wednesday => "水",
+            Weekday::Thursday => "木",
+            Weekday::Friday => "金",
+            Weekday::Saturday => "土",
+            Weekday::Sunday => "日",
+        },
+        AppLocale::KoKr => match weekday {
+            Weekday::Monday => "월",
+            Weekday::Tuesday => "화",
+            Weekday::Wednesday => "수",
+            Weekday::Thursday => "목",
+            Weekday::Friday => "금",
+            Weekday::Saturday => "토",
+            Weekday::Sunday => "일",
+        },
+        AppLocale::RuRu => match weekday {
+            Weekday::Monday => "пн",
+            Weekday::Tuesday => "вт",
+            Weekday::Wednesday => "ср",
+            Weekday::Thursday => "чт",
+            Weekday::Friday => "пт",
+            Weekday::Saturday => "сб",
+            Weekday::Sunday => "вс",
+        },
+        AppLocale::EnUs => match weekday {
+            Weekday::Monday => "Mon",
+            Weekday::Tuesday => "Tue",
+            Weekday::Wednesday => "Wed",
+            Weekday::Thursday => "Thu",
+            Weekday::Friday => "Fri",
+            Weekday::Saturday => "Sat",
+            Weekday::Sunday => "Sun",
+        },
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn format_weekly_recovery(
+    reset_at: Option<i64>,
+    now: i64,
+    locale: crate::models::AppLocale,
+) -> String {
+    let Some(reset_at) = reset_at else {
+        return tray_reset_unknown(locale).to_string();
+    };
+    if reset_at <= now {
+        return tray_reset_pending(locale).to_string();
+    }
+
+    let Ok(reset) = time::OffsetDateTime::from_unix_timestamp(reset_at) else {
+        return tray_reset_unknown(locale).to_string();
+    };
+    let reset = reset.to_offset(
+        time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC),
+    );
+    let recovery = match locale {
+        crate::models::AppLocale::ZhCn => "恢复",
+        crate::models::AppLocale::JaJp => "回復",
+        crate::models::AppLocale::KoKr => "복구",
+        crate::models::AppLocale::RuRu => "восстановление",
+        crate::models::AppLocale::EnUs => "recovery",
+    };
+    if reset_at - now <= 7 * 24 * 3_600 {
+        format!(
+            "{} {:02}:{:02} {recovery}",
+            localized_weekday(reset.weekday(), locale),
+            reset.hour(),
+            reset.minute()
+        )
+    } else {
+        format!(
+            "{:02}/{:02} {:02}:{:02} {recovery}",
+            u8::from(reset.month()),
+            reset.day(),
+            reset.hour(),
+            reset.minute()
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn tray_account_menu_labels(
+    account: &AccountSummary,
+    locale: crate::models::AppLocale,
+    now: i64,
+) -> [String; 3] {
+    use crate::models::AppLocale;
+
+    let usage = account.usage.as_ref();
+    let five_hour = usage.and_then(|usage| usage.five_hour.as_ref());
+    let one_week = usage.and_then(|usage| usage.one_week.as_ref());
+    let (five_label, week_label, remaining_label) = match locale {
+        AppLocale::ZhCn => ("5 小时", "每周", "剩余"),
+        AppLocale::JaJp => ("5 時間", "週間", "残り"),
+        AppLocale::KoKr => ("5시간", "주간", "남음"),
+        AppLocale::RuRu => ("5 часов", "Неделя", "Осталось"),
+        AppLocale::EnUs => ("5-hour", "Weekly", "Left"),
+    };
+    let account_label = account.email.as_deref().unwrap_or(&account.label);
+    let current = if account.is_current { "✓ " } else { "" };
+
+    [
+        format!("{current}{account_label}"),
+        format!(
+            "    {five_label}  {remaining_label} {} · {}",
+            format_percent(remaining_percent(five_hour)),
+            format_five_hour_recovery(five_hour.and_then(|window| window.reset_at), now, locale),
+        ),
+        format!(
+            "    {week_label}  {remaining_label} {} · {}",
+            format_percent(remaining_percent(one_week)),
+            format_weekly_recovery(one_week.and_then(|window| window.reset_at), now, locale),
+        ),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn tray_account_menu_line(account_id: &str, line_index: usize) -> (String, bool) {
+    let is_action = line_index == 0;
+    let id = if is_action {
+        format!("{TRAY_MENU_SWITCH_PREFIX}{account_id}")
+    } else {
+        format!("tray_account_quota::{line_index}::{account_id}")
+    };
+    (id, is_action)
+}
+
 fn build_tray_usage_title(
     accounts: &[AccountSummary],
     mode: TrayUsageDisplayMode,
@@ -705,108 +911,29 @@ fn build_macos_tray_tooltip(
 fn build_macos_tray_menu(
     app: &AppHandle,
     accounts: &[AccountSummary],
-    mode: TrayUsageDisplayMode,
 ) -> Result<tray_icon::menu::Menu, String> {
     use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 
     let locale = i18n::app_locale(app);
     let menu = Menu::new();
-
-    let header_text = format!(
-        "{} ({})",
-        i18n::tray_usage_heading(locale),
-        i18n::tray_usage_mode_label(locale, mode)
-    );
-    let header = MenuItem::with_id("tray_header", header_text, false, None);
-    menu.append(&header)
-        .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-
     let state = app.state::<AppState>();
-    let current_switching = state.current_switching_target();
-    let is_switching = current_switching.is_some();
-
-    if let Some(switching) = &current_switching {
-        let switching_item = MenuItem::with_id(
-            "tray_switching_status",
-            format!("⏳ {}", i18n::tray_switching_to(locale, &switching.target_account_label)),
-            false,
-            None,
-        );
-        menu.append(&switching_item)
-            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-    } else {
-        let current_line = if let Some(current) = accounts.iter().find(|account| account.is_current) {
-            format!(
-                "{}: {}",
-                i18n::tray_current_account_label(locale),
-                tray_account_usage_line(current, mode, locale)
-            )
-        } else {
-            format!(
-                "{}: {}",
-                i18n::tray_current_account_label(locale),
-                i18n::tray_no_current(locale)
-            )
-        };
-        let current_item = MenuItem::with_id("tray_current_summary", current_line, false, None);
-        menu.append(&current_item)
-            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-    }
+    let is_switching = state.current_switching_target().is_some();
 
     if let Some(recent_err) = state.get_recent_switch_error() {
-        let error_item = MenuItem::with_id(
-            "tray_recent_error",
-            i18n::tray_switch_failed(locale, &recent_err),
-            false,
-            None,
-        );
-        menu.append(&error_item)
-            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-
         let details_item = MenuItem::with_id(
             TRAY_MENU_VIEW_ERROR_ID,
-            format!("👉 {}", i18n::tray_view_details(locale)),
+            format!(
+                "{} · {}",
+                i18n::tray_switch_failed(locale, &recent_err),
+                i18n::tray_view_details(locale)
+            ),
             true,
             None,
         );
         menu.append(&details_item)
             .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-    }
-
-    let separator = PredefinedMenuItem::separator();
-    menu.append(&separator)
-        .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-
-    if let Ok(store) = load_store(app) {
-        let mut action_descriptions = Vec::new();
-        if store.settings.launch_codex_after_switch {
-            action_descriptions.push(i18n::tray_action_launch_codex(locale).to_string());
-        }
-        if store.settings.restart_editors_on_switch && !store.settings.restart_editor_targets.is_empty() {
-            let editor_names: Vec<&str> = store
-                .settings
-                .restart_editor_targets
-                .iter()
-                .map(|id| id.label())
-                .collect();
-            action_descriptions.push(i18n::tray_action_restart_editors(
-                locale,
-                &editor_names.join(", "),
-            ));
-        }
-        if !action_descriptions.is_empty() {
-            let action_hint = format!(
-                "{}: {}",
-                i18n::tray_switch_action_prefix(locale),
-                action_descriptions.join(" · ")
-            );
-            let action_item = MenuItem::with_id("tray_switch_hint", action_hint, false, None);
-            menu.append(&action_item)
-                .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-            let sep = PredefinedMenuItem::separator();
-            menu.append(&sep)
-                .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
-        }
+        menu.append(&PredefinedMenuItem::separator())
+            .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
     }
 
     if accounts.is_empty() {
@@ -819,29 +946,32 @@ fn build_macos_tray_menu(
         menu.append(&empty)
             .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
     } else {
-        for account in accounts.iter() {
-            let id = format!("{TRAY_MENU_SWITCH_PREFIX}{}", account.id);
-            let raw_text = tray_account_usage_line(account, mode, locale);
-            let (label_text, enabled) = if is_switching {
-                (raw_text, false)
-            } else if account.is_current {
-                (format!("✓ {raw_text}"), false)
-            } else {
-                (raw_text, true)
-            };
-            let line_item = MenuItem::with_id(
-                id,
-                label_text,
-                enabled,
-                None,
-            );
-            menu.append(&line_item)
-                .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+        let mut ordered_accounts = accounts.iter().collect::<Vec<_>>();
+        ordered_accounts.sort_by_key(|account| !account.is_current);
+        let now = crate::utils::now_unix_seconds();
+        for (account_index, account) in ordered_accounts.iter().enumerate() {
+            for (line_index, label) in tray_account_menu_labels(account, locale, now)
+                .into_iter()
+                .enumerate()
+            {
+                let (id, is_account_action) = tray_account_menu_line(&account.id, line_index);
+                let item = MenuItem::with_id(
+                    id,
+                    label,
+                    is_account_action && !is_switching,
+                    None,
+                );
+                menu.append(&item)
+                    .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+            }
+            if account_index + 1 < ordered_accounts.len() {
+                menu.append(&PredefinedMenuItem::separator())
+                    .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
+            }
         }
     }
 
-    let separator = PredefinedMenuItem::separator();
-    menu.append(&separator)
+    menu.append(&PredefinedMenuItem::separator())
         .map_err(|e| format!("写入状态栏菜单失败: {e}"))?;
 
     let refresh = MenuItem::with_id(
@@ -869,7 +999,6 @@ fn build_native_macos_status_bar_tray(
     id: &str,
     autosave_name: &str,
     accounts: &[AccountSummary],
-    mode: TrayUsageDisplayMode,
     icon: tray_icon::Icon,
     title: &str,
     tooltip: &str,
@@ -879,7 +1008,7 @@ fn build_native_macos_status_bar_tray(
 
     let tray = TrayIconBuilder::new()
         .with_id(id)
-        .with_menu(Box::new(build_macos_tray_menu(app, accounts, mode)?))
+        .with_menu(Box::new(build_macos_tray_menu(app, accounts)?))
         .with_icon(icon)
         .with_icon_as_template(false)
         .with_title(title)
@@ -962,7 +1091,6 @@ fn update_macos_tray_snapshot_on_main_thread(
                 text_tray_id(text_icon_style),
                 MACOS_TEXT_STATUS_AUTOSAVE_NAME,
                 accounts,
-                mode,
                 native_macos_text_status_icon(app, text_icon_style, percent)?,
                 &title,
                 &tooltip,
@@ -971,7 +1099,7 @@ fn update_macos_tray_snapshot_on_main_thread(
             store_macos_text_tray(text_icon_style, tray.clone());
             tray
         };
-        text_tray.set_menu(Some(Box::new(build_macos_tray_menu(app, accounts, mode)?)));
+        text_tray.set_menu(Some(Box::new(build_macos_tray_menu(app, accounts)?)));
         text_tray
             .set_icon_with_as_template(
                 Some(native_macos_text_status_icon(
@@ -1009,7 +1137,6 @@ fn update_macos_tray_snapshot_on_main_thread(
             "codex_tools_native_status_bar",
             MACOS_QUOTA_STATUS_AUTOSAVE_NAME,
             accounts,
-            quota_mode,
             native_macos_tray_icon(app, icon_style, quota_values)?,
             quota_title.as_deref().unwrap_or(""),
             &quota_tooltip,
@@ -1021,9 +1148,7 @@ fn update_macos_tray_snapshot_on_main_thread(
         });
         tray
     };
-    quota_tray.set_menu(Some(Box::new(build_macos_tray_menu(
-        app, accounts, quota_mode,
-    )?)));
+    quota_tray.set_menu(Some(Box::new(build_macos_tray_menu(app, accounts)?)));
     let icon = native_macos_tray_icon(app, icon_style, quota_values)?;
     quota_tray
         .set_icon_with_as_template(Some(icon), false)
@@ -1421,7 +1546,6 @@ fn create_macos_status_bar_trays(
             "codex_tools_native_status_bar",
             MACOS_QUOTA_STATUS_AUTOSAVE_NAME,
             &summaries,
-            quota_mode,
             native_macos_tray_icon(app, icon_style, quota_values)?,
             quota_title.as_deref().unwrap_or(""),
             &quota_tooltip,
@@ -1439,7 +1563,6 @@ fn create_macos_status_bar_trays(
                 text_tray_id(MacosTrayTextIconStyle::CodexTools),
                 MACOS_TEXT_STATUS_AUTOSAVE_NAME,
                 &summaries,
-                mode,
                 native_macos_text_status_icon(app, MacosTrayTextIconStyle::CodexTools, percent)?,
                 &title,
                 &tooltip,
@@ -1454,7 +1577,6 @@ fn create_macos_status_bar_trays(
                 text_tray_id(MacosTrayTextIconStyle::ProgressRing),
                 MACOS_TEXT_STATUS_AUTOSAVE_NAME,
                 &summaries,
-                mode,
                 native_macos_text_status_icon(app, MacosTrayTextIconStyle::ProgressRing, percent)?,
                 &title,
                 &tooltip,
@@ -1697,6 +1819,10 @@ mod tests {
     use super::macos_quota_icon_title;
     #[cfg(target_os = "macos")]
     use super::macos_text_tray_visibility;
+    #[cfg(target_os = "macos")]
+    use super::tray_account_menu_line;
+    #[cfg(target_os = "macos")]
+    use super::tray_account_menu_labels;
     use super::quota_icon_percent;
     use super::should_show_usage_surface;
     #[cfg(target_os = "macos")]
@@ -1784,6 +1910,27 @@ mod tests {
             api_proxy_enabled: false,
             is_current: true,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_account_menu_uses_three_lines_with_recovery_times() {
+        let now = 1_700_000_000;
+        let mut account = current_account_with_usage();
+        account.email = Some("user@example.com".to_string());
+        let usage = account.usage.as_mut().unwrap();
+        usage.five_hour.as_mut().unwrap().reset_at = Some(now + 3 * 3_600 + 6 * 60);
+        usage.one_week.as_mut().unwrap().reset_at = Some(now + 3 * 24 * 3_600);
+
+        let labels = tray_account_menu_labels(&account, AppLocale::ZhCn, now);
+
+        assert_eq!(labels[0], "✓ user@example.com");
+        assert!(labels[1].contains("5 小时  剩余 40% · 3 小时 6 分后恢复"));
+        assert!(labels[2].contains("每周  剩余 60% · "));
+        assert!(labels[2].ends_with("恢复"));
+        assert!(tray_account_menu_line(&account.id, 0).1);
+        assert!(!tray_account_menu_line(&account.id, 1).1);
+        assert!(!tray_account_menu_line(&account.id, 2).1);
     }
 
     #[cfg(target_os = "macos")]
